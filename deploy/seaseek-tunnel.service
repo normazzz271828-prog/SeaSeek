@@ -1,0 +1,22 @@
+[Unit]
+Description=SeaSeek temporary HTTPS demo tunnel
+After=network-online.target seaseek-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=seaseek
+Group=seaseek
+WorkingDirectory=/opt/seaseek
+ExecStart=/opt/seaseek/bin/cloudflared tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:8766
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/seaseek/.tmp
+
+[Install]
+WantedBy=multi-user.target

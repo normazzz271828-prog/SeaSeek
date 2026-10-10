@@ -1,0 +1,12 @@
+# Install CPU torch==2.11.0 and torchvision==0.26.0 separately first.
+# Server has libGL/libglib; Ultralytics declares opencv-python, so use that
+# distribution rather than installing two competing cv2 distributions.
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+requests>=2.32,<3
+numpy>=1.26,<3
+opencv-python>=4.10,<5
+Pillow>=10,<13
+ultralytics==8.3.200
+ultralytics-thop==2.0.18
+imageio-ffmpeg>=0.6,<1

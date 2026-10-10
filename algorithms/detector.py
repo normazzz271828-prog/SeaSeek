@@ -15,7 +15,7 @@ CLASSES=['散装货船','集装箱船','液体运输船','渔船','杂货船','�
 COLORS=['#3DD8C5','#44B5FF','#F3BB50','#FF7880','#A998FF','#86DA7B','#F59ED5','#67D9EE','#E8A26C']
 
 def font(size):
-    for path in ['C:/Windows/Fonts/msyh.ttc','/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc']:
+    for path in [str(ROOT/'.tmp/fonts/NotoSansCJKsc-Regular.otf'),'C:/Windows/Fonts/msyh.ttc','/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc']:
         if Path(path).exists():
             return ImageFont.truetype(path,size)
     return ImageFont.load_default()
