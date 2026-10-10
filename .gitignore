@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+data/
+.tmp/
+.streamlit/secrets.toml
+*.log
+models/*.pt
+Ultralytics/
+tmp/
+*.env
+!deploy/api.env.example

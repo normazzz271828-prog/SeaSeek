@@ -1,0 +1,81 @@
+<script>
+(()=>{
+  if(window.haiXunGlass)return;
+  const media=matchMedia('(prefers-reduced-motion: reduce)');
+  let route=null,timer=null,enterAnimation=null,navigationEpoch=0;
+  const veil=document.createElement('div');
+  veil.className='hx-transition';veil.setAttribute('aria-hidden','true');document.body.append(veil);
+  const enabled=()=>!media.matches&&!document.documentElement.classList.contains('hx-motion-paused');
+  const spotlight=document.createElement('div');
+  spotlight.className='hx-spotlight';spotlight.setAttribute('aria-hidden','true');
+  for(const className of ['hx-search-cone','hx-search-pool']){
+    const layer=document.createElement('div');layer.className=className;spotlight.append(layer);
+  }
+  document.body.append(spotlight);
+  let scheduled=false,x=0,y=0;
+  document.addEventListener('pointermove',event=>{
+    if(!enabled()||!matchMedia('(pointer:fine)').matches)return;
+    x=event.clientX;y=event.clientY;
+    if(scheduled)return;
+    scheduled=true;
+    requestAnimationFrame(()=>{
+      const sx=innerWidth*.94,sy=innerHeight*.85;
+      spotlight.style.setProperty('--mx',`${x}px`);spotlight.style.setProperty('--my',`${y}px`);
+      spotlight.style.setProperty('--sx',`${sx}px`);spotlight.style.setProperty('--sy',`${sy}px`);
+      spotlight.style.setProperty('--beam-angle',`${Math.atan2(y-sy,x-sx)*180/Math.PI}deg`);
+      spotlight.style.setProperty('--beam-length',`${Math.hypot(x-sx,y-sy)}px`);
+      spotlight.classList.add('active');scheduled=false;
+    });
+  },{passive:true});
+  document.documentElement.addEventListener('pointerleave',()=>spotlight.classList.remove('active'));
+  window.haiXunGlass={prepare(next){
+    if(next!==route){
+      enterAnimation?.cancel();
+      if(route!==null){document.documentElement.classList.add('hx-navigating');if(enabled())veil.classList.add('active');}
+    }
+    document.documentElement.dataset.hxRoute=next;
+  },enter(next){
+    const changed=route!==next,epoch=navigationEpoch;
+    route=next;document.documentElement.dataset.hxRoute=next;
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      if(epoch!==navigationEpoch||route!==next)return;
+      clearTimeout(timer);veil.classList.remove('active');
+      document.documentElement.classList.remove('hx-navigating');
+      document.querySelectorAll('.hx-nav-pending').forEach(item=>item.classList.remove('hx-nav-pending'));
+      document.documentElement.dataset.hxReady=next;
+      const container=document.querySelector('.stMainBlockContainer');
+      if(changed&&enabled()&&container)enterAnimation=container.animate([{opacity:.9},{opacity:1}],{duration:160,easing:'ease-out'});
+    }));
+  }};
+  window.addEventListener('popstate',()=>{
+    if(route===''&&location.pathname!=='/')document.documentElement.classList.add('hx-navigating');
+  });
+  document.addEventListener('click',event=>{
+    const landingLink=event.target.closest('.sea-landing a');
+    if(landingLink&&!event.ctrlKey&&!event.metaKey&&!event.shiftKey&&event.button===0){
+      const destination=new URL(landingLink.href,location.href);
+      if(destination.origin===location.origin&&!destination.hash){
+        const nav=Array.from(document.querySelectorAll('[data-testid="stTopNavLink"]')).find(item=>new URL(item.href).pathname===destination.pathname);
+        if(nav){event.preventDefault();nav.click();return;}
+      }
+      if(destination.hash==='#capabilities'){
+        event.preventDefault();document.getElementById('capabilities')?.scrollIntoView({behavior:enabled()?'smooth':'instant'});return;
+      }
+    }
+    const anchor=event.target.closest('header a,.st-key-about_entry a');
+    if(!anchor||!enabled()||event.ctrlKey||event.metaKey||event.shiftKey||event.button!==0)return;
+    const url=new URL(anchor.href,location.href);
+    if(url.pathname===location.pathname)return;
+    navigationEpoch++;
+    enterAnimation?.cancel();
+    document.documentElement.classList.add('hx-navigating');
+    document.querySelectorAll('.hx-nav-pending').forEach(item=>item.classList.remove('hx-nav-pending'));
+    anchor.classList.add('hx-nav-pending');
+    veil.classList.add('active');
+    timer=setTimeout(()=>{
+      veil.classList.remove('active');document.documentElement.classList.remove('hx-navigating');
+      document.querySelectorAll('.hx-nav-pending').forEach(item=>item.classList.remove('hx-nav-pending'));
+    },5000);
+  });
+})();
+</script>

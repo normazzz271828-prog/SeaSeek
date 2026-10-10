@@ -1,0 +1,21 @@
+[server]
+maxUploadSize = 12
+enableStaticServing = true
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "dark"
+primaryColor = "#9BE4DC"
+backgroundColor = "#081D2B"
+secondaryBackgroundColor = "#193748"
+textColor = "#EBF4F8"
+borderColor = "#3E5967"
+baseRadius = "large"
+
+[theme.sidebar]
+backgroundColor = "#0C2537"
+secondaryBackgroundColor = "#17364B"
+textColor = "#E7F3F7"
+primaryColor = "#64D9CE"

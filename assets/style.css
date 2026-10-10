@@ -1,0 +1,17 @@
+<style>
+@keyframes arrive{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes drift{0%,100%{transform:translate(0,0)}50%{transform:translate(-20px,12px)}}
+.stMainBlockContainer{padding-top:2rem;max-width:1500px;animation:arrive .35s ease-out}
+.brand{display:flex;align-items:center;gap:12px;padding:18px 0 24px;font-size:27px;font-weight:700;letter-spacing:3px;color:#e7f3f7}
+.brand small{display:block;font-size:10px;letter-spacing:2px;color:#88b4c5;margin-top:4px}.brand-mark{color:#64d9ce;font-size:42px}
+.hero{position:relative;overflow:hidden;border-radius:22px;padding:44px 42px;margin:0 0 24px;background:linear-gradient(115deg,#0a263b,#104354);color:#efffff;min-height:255px}
+.hero:before{content:'';position:absolute;right:-70px;top:-180px;width:540px;height:540px;border-radius:50%;border:1px solid #6ce0d54d;box-shadow:0 0 0 55px #65d9d20a,0 0 0 110px #65d9d208,0 0 0 165px #65d9d206;animation:drift 12s ease-in-out infinite;pointer-events:none}
+.hero .eyebrow{font-size:11px;letter-spacing:3px;color:#76dbd1;margin-bottom:17px}.hero h1{font-size:39px;font-weight:650;letter-spacing:1px;margin:0 0 15px;line-height:1.35;color:#efffff}.hero p{color:#b9d6df;max-width:640px;font-size:15px;line-height:1.8}.hero .tag{display:inline-block;border:1px solid #72cfc14d;border-radius:30px;padding:5px 13px;color:#9be4d9;font-size:11px}
+div[data-testid="stMetric"]{background:white;border:1px solid #dde6ed;border-radius:16px;padding:18px 22px;box-shadow:0 4px 18px #12304704}
+div[data-testid="stVerticalBlockBorderWrapper"]{transition:box-shadow .2s ease,border-color .2s ease;background:#fff;border-radius:16px}
+div[data-testid="stVerticalBlockBorderWrapper"]:hover{box-shadow:0 5px 22px #12304708}
+.stButton button{transition:transform .18s ease,box-shadow .18s ease}.stButton button:hover{transform:translateY(-1px);box-shadow:0 4px 12px #087f8c1a}
+.stCaption{line-height:1.7}h1,h2,h3{letter-spacing:-.4px}
+@media(max-width:700px){.hero{padding:26px 22px;min-height:230px}.hero h1{font-size:28px}.stMainBlockContainer{padding-top:1rem}}
+@media(prefers-reduced-motion:reduce){*,*:before{animation:none!important;transition:none!important}}
+</style>

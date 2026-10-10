@@ -1,0 +1,9 @@
+{
+  "file": "ship_obb.pt",
+  "source": "D:/Projects/海面目标检测与识别/accuracy_lab/followup/frozen_checkpoints/parallel_identity_v2/best.pt",
+  "sha256": "8baeff9e3f803dc3c9ebb9a1abee42e4bac0f1931c6ac6a70faf0abe9bf8e826",
+  "architecture": "YOLO11s-OBB",
+  "ultralytics": "8.3.200",
+  "imgsz": 1024,
+  "classes": ["散装货船", "集装箱船", "液体运输船", "渔船", "杂货船", "驱逐舰", "护卫舰", "保障船", "航母"]
+}

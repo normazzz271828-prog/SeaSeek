@@ -1,0 +1,161 @@
+[
+  {
+    "file": "近海观察.jpg",
+    "source": "000002.jpg",
+    "split": "train"
+  },
+  {
+    "file": "海面船舶.jpg",
+    "source": "000004.jpg",
+    "split": "train"
+  },
+  {
+    "file": "远距离影像.jpg",
+    "source": "000008.jpg",
+    "split": "train"
+  },
+  {
+    "file": "散装货船_01_004460.jpg",
+    "source": "004460.jpg",
+    "split": "train",
+    "class_ids": [
+      0
+    ]
+  },
+  {
+    "file": "散装货船_02_003270.jpg",
+    "source": "003270.jpg",
+    "split": "train",
+    "class_ids": [
+      0
+    ]
+  },
+  {
+    "file": "集装箱船_01_002385.jpg",
+    "source": "002385.jpg",
+    "split": "train",
+    "class_ids": [
+      1
+    ]
+  },
+  {
+    "file": "集装箱船_02_002011.jpg",
+    "source": "002011.jpg",
+    "split": "train",
+    "class_ids": [
+      1
+    ]
+  },
+  {
+    "file": "液体运输船_01_002713.jpg",
+    "source": "002713.jpg",
+    "split": "train",
+    "class_ids": [
+      2
+    ]
+  },
+  {
+    "file": "液体运输船_02_002761.jpg",
+    "source": "002761.jpg",
+    "split": "train",
+    "class_ids": [
+      2
+    ]
+  },
+  {
+    "file": "渔船_01_003470.jpg",
+    "source": "003470.jpg",
+    "split": "train",
+    "class_ids": [
+      3
+    ]
+  },
+  {
+    "file": "渔船_02_000690.jpg",
+    "source": "000690.jpg",
+    "split": "train",
+    "class_ids": [
+      3
+    ]
+  },
+  {
+    "file": "杂货船_01_004897.jpg",
+    "source": "004897.jpg",
+    "split": "train",
+    "class_ids": [
+      4
+    ]
+  },
+  {
+    "file": "杂货船_02_005322.jpg",
+    "source": "005322.jpg",
+    "split": "train",
+    "class_ids": [
+      4
+    ]
+  },
+  {
+    "file": "驱逐舰_01_001511.jpg",
+    "source": "001511.jpg",
+    "split": "train",
+    "class_ids": [
+      5
+    ]
+  },
+  {
+    "file": "驱逐舰_02_000872.jpg",
+    "source": "000872.jpg",
+    "split": "train",
+    "class_ids": [
+      5
+    ]
+  },
+  {
+    "file": "护卫舰_01_002446.jpg",
+    "source": "002446.jpg",
+    "split": "train",
+    "class_ids": [
+      6
+    ]
+  },
+  {
+    "file": "护卫舰_02_003933.jpg",
+    "source": "003933.jpg",
+    "split": "train",
+    "class_ids": [
+      6
+    ]
+  },
+  {
+    "file": "保障船_01_001825.jpg",
+    "source": "001825.jpg",
+    "split": "train",
+    "class_ids": [
+      7
+    ]
+  },
+  {
+    "file": "保障船_02_001472.jpg",
+    "source": "001472.jpg",
+    "split": "train",
+    "class_ids": [
+      7
+    ]
+  },
+  {
+    "file": "航母_01_003695.jpg",
+    "source": "003695.jpg",
+    "split": "train",
+    "class_ids": [
+      8
+    ]
+  },
+  {
+    "file": "航母_02_005697.jpg",
+    "source": "005697.jpg",
+    "split": "train",
+    "class_ids": [
+      8
+    ]
+  }
+]

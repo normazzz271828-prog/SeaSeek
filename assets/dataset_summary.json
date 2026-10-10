@@ -1,0 +1,29 @@
+{
+  "source": "D:\\Projects\\海面目标检测与识别\\accuracy_lab\\prepared_v2",
+  "training_images": 4920,
+  "training_objects": 9710,
+  "class_names": [
+    "散装货船",
+    "集装箱船",
+    "液体运输船",
+    "渔船",
+    "杂货船",
+    "驱逐舰",
+    "护卫舰",
+    "保障船",
+    "航母"
+  ],
+  "class_counts": {
+    "3": 1433,
+    "0": 734,
+    "6": 1465,
+    "4": 1198,
+    "8": 843,
+    "5": 1630,
+    "7": 827,
+    "2": 1004,
+    "1": 576
+  },
+  "example_images": 21,
+  "policy": "train only; no new training or accuracy claim"
+}
