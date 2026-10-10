@@ -3,7 +3,7 @@ import base64
 from pathlib import Path
 import requests
 import streamlit as st
-from runtime import API, API_TOKEN, CLOUD
+from runtime import CLOUD, connection_settings
 
 ROOT=Path(__file__).resolve().parent
 
@@ -20,14 +20,15 @@ def finish_and_stop():
     st.stop()
 
 def api(method,path,*,binary=False,**kwargs):
-    if not API:
+    api_url,api_token=connection_settings()
+    if not api_url:
         st.info("云端工作台正在准备中。你可以先浏览首页与平台介绍。")
         finish_and_stop()
     headers=dict(kwargs.pop('headers',{}))
-    if API_TOKEN:
-        headers['Authorization']='Bearer '+API_TOKEN
+    if api_token:
+        headers['Authorization']='Bearer '+api_token
     try:
-        response=requests.request(method,API+path,timeout=(8,90),headers=headers,allow_redirects=False,**kwargs)
+        response=requests.request(method,api_url+path,timeout=(8,90),headers=headers,allow_redirects=False,**kwargs)
         if response.is_redirect:
             raise requests.HTTPError('API redirect',response=response)
         response.raise_for_status()

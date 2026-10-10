@@ -17,5 +17,14 @@ def setting(name,default=""):
 # localhost API fallback. The cloud wrapper always chooses cloud explicitly.
 mode=os.environ.get('SEASEEK_RUNTIME')
 CLOUD=mode=='cloud' if mode else st.get_option('server.address') not in ('127.0.0.1','localhost','::1')
-API=setting('HAIXUN_API_URL','' if CLOUD else 'http://127.0.0.1:8765').rstrip('/')
-API_TOKEN=setting('HAIXUN_API_TOKEN')
+
+def connection_settings():
+    # Secrets can change while imported modules remain cached across reruns.
+    # Read the current values for every request; never cache service tokens.
+    return (
+        setting('HAIXUN_API_URL','' if CLOUD else 'http://127.0.0.1:8765').rstrip('/'),
+        setting('HAIXUN_API_TOKEN'),
+    )
+
+# Startup snapshot retained for runtime diagnostics. Requests use the getter.
+API,API_TOKEN=connection_settings()

@@ -33,11 +33,24 @@ class CloudContracts(unittest.TestCase):
     def test_binary_request_keeps_service_token_on_server(self):
         import ui
         response=Mock(content=b'video-bytes',is_redirect=False)
-        with patch.object(ui,'API','https://api.example'),patch.object(ui,'API_TOKEN','test-token'),patch.object(ui.requests,'request',return_value=response) as request:
+        with patch.object(ui,'connection_settings',return_value=('https://api.example','test-token')),patch.object(ui.requests,'request',return_value=response) as request:
             self.assertEqual(ui.api('GET','/videos/id/media/result',binary=True),b'video-bytes')
             self.assertEqual(request.call_args.kwargs['headers']['Authorization'],'Bearer test-token')
             self.assertFalse(request.call_args.kwargs['allow_redirects'])
             self.assertNotIn('test-token',request.call_args.args[1])
+
+    def test_secrets_updates_apply_without_reimporting_modules(self):
+        import runtime,ui
+        secrets={}
+        with patch.dict(os.environ,{},clear=True),patch.object(runtime,'CLOUD',True),patch.object(runtime.st,'secrets',secrets),patch.object(ui.requests,'request',return_value=Mock(is_redirect=False)) as request:
+            self.assertEqual(runtime.connection_settings(),('',''))
+            secrets.update(HAIXUN_API_URL='https://first.example/',HAIXUN_API_TOKEN='first-token')
+            ui.api('GET','/tasks')
+            self.assertEqual(request.call_args.args[1],'https://first.example/tasks')
+            secrets.update(HAIXUN_API_URL='https://second.example',HAIXUN_API_TOKEN='rotated-token')
+            ui.api('GET','/tasks')
+            self.assertEqual(request.call_args.args[1],'https://second.example/tasks')
+            self.assertEqual(request.call_args.kwargs['headers']['Authorization'],'Bearer rotated-token')
 
     def test_backend_service_token_gates_business_and_media(self):
         import backend

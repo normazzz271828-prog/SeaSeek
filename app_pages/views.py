@@ -9,7 +9,7 @@ import pydeck as pdk
 import streamlit as st
 from PIL import Image
 
-from ui import ROOT, API, api, badge, task_picker, title
+from ui import ROOT, api, badge, task_picker, title
 from runtime import CLOUD
 
 METHODS={"自动增强":"adaptive","提亮暗部":"gamma_light","压低过亮区域":"gamma_dark","局部对比度":"clahe","温和去雾":"dehaze_mix","保留原图":"original"}
