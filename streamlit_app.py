@@ -5,6 +5,15 @@ from app_pages.views import overview, imaging, situation, collaboration, about
 from app_pages.home import home
 
 st.set_page_config(page_title="海寻 SeaSeek · 海面搜救协同平台",page_icon=":material/radar:",layout="wide")
+# Deep links contain stable business IDs, separate from formatted widget labels.
+entry=(st.query_params.get('task_id'),st.query_params.get('clue_id'))
+if entry[0] and entry!=st.session_state.get('entry_link'):
+    st.session_state.entry_link=entry
+    st.session_state.active_task=entry[0]
+    st.session_state.task_selection=entry[0]
+    if entry[1]:
+        st.session_state.clue_selection=entry[1]
+        st.session_state.open_feedback=True
 st.html(scene_style())
 st.html((ROOT/"assets/style.css").read_text(encoding="utf-8"))
 st.html(ROOT/"assets/liquid.css")
@@ -27,6 +36,8 @@ if page.url_path=="":
     with about_col,st.container(key="about_entry"):
         st.page_link(pages[-1],label="关于海寻",icon=":material/radar:",width="content")
 st.html('<script>window.haiXunGlass?.prepare('+json.dumps(page.url_path)+');</script>',unsafe_allow_javascript=True)
+if page.url_path:
+    st.caption('演示环境 · 演练位置为模拟；上传影像仅用于本次演示分析。')
 try:
     page.run()
 finally:

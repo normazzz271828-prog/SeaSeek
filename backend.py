@@ -20,6 +20,11 @@ from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from concurrent.futures import ThreadPoolExecutor
 import threading
+import time
+import shutil
+from functools import wraps
+from collections import deque
+from fastapi.responses import Response
 
 from algorithms.enhancement import enhance as light_enhance
 from algorithms.dehazing import enhance as dehaze
@@ -27,9 +32,13 @@ from algorithms.dehazing import enhance as dehaze
 ROOT = Path(__file__).resolve().parent
 STORE = Path(os.environ.get("HAIXUN_DATA_DIR", ROOT / "data"))
 STORE.mkdir(parents=True, exist_ok=True)
-app = FastAPI(title="海寻本地业务 API", version="0.2.0")
+app = FastAPI(title="海寻统一业务 API", version="0.3.0")
 API_MODE=os.environ.get('SEASEEK_API_MODE','local')
 API_TOKEN=os.environ.get('HAIXUN_API_TOKEN','')
+RESET_TOKEN=os.environ.get('HAIXUN_RESET_TOKEN','')
+_quota_lock=threading.Lock()
+_quota={}
+_image_lock=threading.Lock()
 if API_MODE=='remote' and not API_TOKEN:
     raise RuntimeError('Remote API requires HAIXUN_API_TOKEN.')
 
@@ -39,6 +48,20 @@ async def service_access(request,call_next):
         supplied=request.headers.get('Authorization','')
         if not hmac.compare_digest(supplied.encode(),('Bearer '+API_TOKEN).encode()):
             return JSONResponse(status_code=401,content={'detail':'服务访问未授权'})
+    if request.method in ('POST','PATCH'):
+        if int(request.headers.get('content-length','0') or 0)>17_000_000:
+            return JSONResponse(status_code=413,content={'detail':'上传超过演示环境限制'})
+        session=request.headers.get('X-Seaseek-Session','')[:64] or (request.client.host if request.client else 'unknown')
+        tick=time.monotonic()
+        with _quota_lock:
+            for key in list(_quota):
+                while _quota[key] and _quota[key][0]<tick-3600:_quota[key].popleft()
+                if not _quota[key]:del _quota[key]
+            keys=[('global',240),(session,60)]
+            if request.url.path in ('/analyses','/analyses/upload'):keys += [('image-global',100),('image-'+session,20)]
+            if any(len(_quota.get(key,()))>=limit for key,limit in keys):
+                return JSONResponse(status_code=429,content={'detail':'演示使用额度已达上限，请稍后再试'},headers={'Retry-After':'3600'})
+            for key,_ in keys:_quota.setdefault(key,deque()).append(tick)
     return await call_next(request)
 STATUSES = ["待核实", "待分派", "处理中", "已完成", "已排除"]
 
@@ -68,6 +91,7 @@ with db() as con:
     CREATE TABLE IF NOT EXISTS detections(analysis_id TEXT PRIMARY KEY REFERENCES analyses(id),image BLOB,predictions TEXT,confidence REAL,source TEXT,created TEXT);
     CREATE TABLE IF NOT EXISTS videos(id TEXT PRIMARY KEY,task_id TEXT REFERENCES tasks(id),name TEXT,status TEXT,progress REAL,error TEXT,confidence REAL,sample_fps REAL,created TEXT);
     CREATE TABLE IF NOT EXISTS video_clues(clue_id TEXT PRIMARY KEY REFERENCES clues(id),video_id TEXT REFERENCES videos(id),frame_index INTEGER,time REAL);
+    CREATE TABLE IF NOT EXISTS reviews(analysis_id TEXT PRIMARY KEY REFERENCES analyses(id),decision TEXT,created TEXT);
     """)
     con.execute("UPDATE videos SET status='failed',error='服务重启中断了处理，请重新提交' WHERE status IN ('queued','running')")
 
@@ -107,7 +131,7 @@ class Update(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "mode": "shared backend" if API_MODE=='remote' else "local prototype", "version": "0.2.0"}
+    return {"status": "ok", "mode": "shared backend" if API_MODE=='remote' else "local prototype", "version": "0.3.0"}
 
 @app.get("/tasks")
 def tasks():
@@ -138,12 +162,57 @@ def demo():
         event(con,"demo-coastal","载入演示任务与三条虚构线索")
     return {"id": "demo-coastal"}
 
+@app.post('/demo/reset')
+def reset_demo(request: Request):
+    supplied=request.headers.get('X-Seaseek-Reset','')
+    if API_MODE=='remote' and (not RESET_TOKEN or not hmac.compare_digest(supplied.encode(),RESET_TOKEN.encode())):
+        raise HTTPException(403,'重置需要演示管理口令')
+    with _video_submit_lock, _image_lock:
+        with db() as con:
+            if con.execute("SELECT 1 FROM videos WHERE task_id='demo-coastal' AND status IN ('queued','running')").fetchone():
+                raise HTTPException(409,'请等待演示视频处理结束后再重置')
+            video_ids=[r[0] for r in con.execute("SELECT id FROM videos WHERE task_id='demo-coastal'")]
+            if any(ident in _video_jobs and not _video_jobs[ident].done() for ident in video_ids):
+                raise HTTPException(409,'视频取消正在完成，请稍后再重置')
+            con.execute("DELETE FROM video_clues WHERE clue_id IN (SELECT id FROM clues WHERE task_id='demo-coastal')")
+            con.execute("DELETE FROM clues WHERE task_id='demo-coastal'")
+            for table in ('detections','reviews'):
+                con.execute(f"DELETE FROM {table} WHERE analysis_id IN (SELECT id FROM analyses WHERE task_id='demo-coastal')")
+            for table in ('analyses','videos','events','tasks'):
+                con.execute(f"DELETE FROM {table} WHERE {'id' if table=='tasks' else 'task_id'}='demo-coastal'")
+        for ident in video_ids:
+            directory=video_dir(ident).resolve()
+            if directory.parent==(STORE/'videos').resolve():shutil.rmtree(directory,ignore_errors=True)
+        return demo()
+
 def png(image):
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     return buf.getvalue()
 
+def jpeg(image,quality=90):
+    buf=io.BytesIO()
+    image.convert('RGB').save(buf,format='JPEG',quality=quality,optimize=True)
+    return buf.getvalue()
+
+def image_work(func):
+    @wraps(func)
+    def guarded(*args,**kwargs):
+        with _video_submit_lock:
+            if not _image_lock.acquire(blocking=False):raise HTTPException(429,'正在处理另一张影像，请完成后重试')
+        try:
+            with db() as con:
+                if con.execute("SELECT 1 FROM videos WHERE status IN ('queued','running')").fetchone():
+                    raise HTTPException(409,'视频正在排队或检测，请完成后再分析图片')
+            return func(*args,**kwargs)
+        finally:_image_lock.release()
+    return guarded
+
+def image_bytes(row,kind):
+    return row['original'] if kind=='result' and row['result'] is None else row[kind]
+
 @app.post("/analyses")
+@image_work
 def analyze(item: Analysis):
     methods = {"original","adaptive","gamma_light","gamma_dark","clahe","dehaze_mild","dehaze_mix","dehaze_adaptive"}
     if item.method not in methods:
@@ -165,7 +234,9 @@ def analyze(item: Analysis):
     output, info = (dehaze if item.method.startswith("dehaze") else light_enhance)(rgb,item.method)
     ident = uuid.uuid4().hex
     with db() as con:
-        con.execute("INSERT INTO analyses VALUES(?,?,?,?,?,?,?,?,?,?)", (ident,item.task_id,item.name,item.method,info["selected"],png(image),png(Image.fromarray(output)),image.width,image.height,now()))
+        if con.execute('SELECT COUNT(*) FROM analyses').fetchone()[0]>=500:
+            raise HTTPException(429,'演示影像存储已满，请联系管理者清理')
+        con.execute("INSERT INTO analyses VALUES(?,?,?,?,?,?,?,?,?,?)", (ident,item.task_id,item.name,item.method,info["selected"],png(image),None if np.array_equal(rgb,output) else png(Image.fromarray(output)),image.width,image.height,now()))
         event(con,item.task_id,f"完成影像分析 · {item.name}")
     return {"id":ident,"selected":info["selected"],"width":image.width,"height":image.height}
 
@@ -174,23 +245,66 @@ def analyses(task_id: str):
     with db() as con:
         return [dict(r) for r in con.execute("SELECT id,name,method,selected,width,height,created FROM analyses WHERE task_id=? ORDER BY rowid DESC",(task_id,))]
 
+@app.post('/analyses/upload')
+async def upload_analysis(request: Request,task_id: str,name: str=Query(max_length=200),method: str='original'):
+    raw=bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw)>12*1024*1024:raise HTTPException(413,'图片超过 12 MB')
+    # Reuse exactly the same business validation; base64 stays inside the server.
+    from starlette.concurrency import run_in_threadpool
+    return await run_in_threadpool(analyze,Analysis(task_id=task_id,name=name,method=method,image=base64.b64encode(raw).decode()))
+
 @app.get("/analyses/{ident}")
 def analysis(ident: str):
     with db() as con:
-        row = dict(require(con,"analyses",ident))
-        detection=con.execute("SELECT * FROM detections WHERE analysis_id=?",(ident,)).fetchone()
+        row=con.execute('SELECT id,task_id,name,method,selected,width,height,created,result IS NULL AS result_is_original FROM analyses WHERE id=?',(ident,)).fetchone()
+        if not row:raise HTTPException(404,'记录不存在')
+        row=dict(row)
+        detection=con.execute("SELECT predictions,confidence,source,created FROM detections WHERE analysis_id=?",(ident,)).fetchone()
+        review=con.execute('SELECT decision,created FROM reviews WHERE analysis_id=?',(ident,)).fetchone()
     row['detection']=None
     if detection:
-        row['detection']={"image":base64.b64encode(detection['image']).decode(),"predictions":json.loads(detection['predictions']),"confidence":detection['confidence'],"source":detection['source'],"created":detection['created']}
-    for field in ("original","result"):
-        row[field] = base64.b64encode(row[field]).decode()
+        row['detection']=dict(detection)
+        row['detection']['predictions']=json.loads(detection['predictions'])
+    row['review']=dict(review) if review else None
     return row
+
+@app.get('/analyses/{ident}/media/{kind}')
+def analysis_media(ident: str,kind: str,size: str='preview'):
+    if kind not in ('original','result','detection') or size not in ('preview','thumb','full'):
+        raise HTTPException(404,'图片不存在')
+    with db() as con:
+        row=require(con,'analyses',ident)
+        if kind=='detection':
+            found=con.execute('SELECT image FROM detections WHERE analysis_id=?',(ident,)).fetchone()
+            if not found:raise HTTPException(404,'暂无标注图')
+            raw=found['image']
+        else:raw=image_bytes(row,kind)
+    if size=='full':return Response(raw,media_type='image/png',headers={'Cache-Control':'private, max-age=300'})
+    with Image.open(io.BytesIO(raw)) as image:
+        image.thumbnail((480,480) if size=='thumb' else (1280,1280))
+        content=jpeg(image,80 if size=='thumb' else 84)
+    return Response(content,media_type='image/jpeg',headers={'Cache-Control':'private, max-age=300'})
+
+class Review(BaseModel):
+    decision: str
+
+@app.post('/analyses/{ident}/review')
+def review_analysis(ident: str,item: Review):
+    if item.decision not in ('confirmed','ignored'):raise HTTPException(422,'核实结果无效')
+    with db() as con:
+        row=require(con,'analyses',ident)
+        con.execute('INSERT OR REPLACE INTO reviews VALUES(?,?,?)',(ident,item.decision,now()))
+        event(con,row['task_id'],'人工核实影像 · '+('确认目标' if item.decision=='confirmed' else '忽略结果'))
+    return {'decision':item.decision}
 
 class DetectSettings(BaseModel):
     confidence: float = Field(default=.25,ge=.05,le=.95)
     source: str = 'original'
 
 @app.post('/analyses/{ident}/detect')
+@image_work
 def detect_image(ident: str,settings: DetectSettings):
     if settings.source not in ('original','result'):
         raise HTTPException(422,'检测输入无效')
@@ -198,17 +312,19 @@ def detect_image(ident: str,settings: DetectSettings):
         row=dict(require(con,'analyses',ident))
     from algorithms.detector import detect
     try:
-        image=Image.open(io.BytesIO(row[settings.source])).convert('RGB')
+        image=Image.open(io.BytesIO(image_bytes(row,settings.source))).convert('RGB')
         annotated,predictions=detect(np.asarray(image),settings.confidence)
     except Exception as exc:
         raise HTTPException(503,f'检测失败：{exc}') from exc
     with db() as con:
         con.execute('INSERT OR REPLACE INTO detections VALUES(?,?,?,?,?,?)',(ident,png(annotated),json.dumps(predictions,ensure_ascii=False),settings.confidence,settings.source,now()))
+        con.execute('DELETE FROM reviews WHERE analysis_id=?',(ident,))
         event(con,row['task_id'],f"船舶检测 · {row['name']} · {len(predictions)} 个目标 · {'原图' if settings.source=='original' else '增强图'}")
     return {'count':len(predictions),'predictions':predictions}
 
 _video_executor=ThreadPoolExecutor(max_workers=1,thread_name_prefix='haixun-video')
 _video_submit_lock=threading.Lock()
+_video_jobs={}
 
 def video_dir(ident):
     return STORE/'videos'/ident
@@ -284,6 +400,7 @@ async def submit_video(request: Request,task_id: str,name: str=Query(max_length=
         if len(content)>12*1024*1024:raise HTTPException(413,'视频超过 12 MB')
     if not content:raise HTTPException(422,'视频不能为空')
     with _video_submit_lock:
+        if _image_lock.locked():raise HTTPException(409,'图片正在分析，请完成后再提交视频')
         with db() as con:
             pending=con.execute("SELECT COUNT(*) FROM videos WHERE status IN ('queued','running')").fetchone()[0]
             if pending>=3:raise HTTPException(429,'队列已满，请等待现有任务完成')
@@ -292,7 +409,9 @@ async def submit_video(request: Request,task_id: str,name: str=Query(max_length=
             (directory/'input.mp4').write_bytes(content)
             con.execute('INSERT INTO videos VALUES(?,?,?,?,?,?,?,?,?)',(ident,task_id,name,'queued',0,'',confidence,sample_fps,now()))
             event(con,task_id,f'提交视频检测 · {name}')
-        _video_executor.submit(video_worker,ident)
+        for finished in list(_video_jobs):
+            if _video_jobs[finished].done():del _video_jobs[finished]
+        _video_jobs[ident]=_video_executor.submit(video_worker,ident)
     return {'id':ident}
 
 @app.get('/videos')
@@ -302,7 +421,11 @@ def list_videos(task_id: str):
 
 @app.get('/videos/{ident}')
 def get_video(ident: str):
-    with db() as con:row=dict(require(con,'videos',ident))
+    with db() as con:
+        row=dict(require(con,'videos',ident))
+        if row['status']=='queued':
+            pending=[r[0] for r in con.execute("SELECT id FROM videos WHERE status IN ('queued','running') ORDER BY rowid")]
+            row['ahead']=pending.index(ident) if ident in pending else 0
     if row['status']=='completed':
         row['results']=json.loads((video_dir(ident)/'records.json').read_text(encoding='utf-8'))
     return row
@@ -365,6 +488,9 @@ def add_clue(item: Clue):
         require(con,"tasks",item.task_id)
         if item.analysis_id and require(con,"analyses",item.analysis_id)["task_id"]!=item.task_id:
             raise HTTPException(422,"影像不属于当前任务")
+        if item.analysis_id:
+            review=con.execute('SELECT decision FROM reviews WHERE analysis_id=?',(item.analysis_id,)).fetchone()
+            if review and review['decision']=='ignored':raise HTTPException(409,'该影像结果已忽略，请先重新确认目标')
         con.execute("INSERT INTO clues VALUES(?,?,?,?,?,?,?,?,?,?)",(ident,item.task_id,item.analysis_id,item.title.strip(),"待核实","",item.notes,item.lat,item.lon,now()))
         event(con,item.task_id,f"提交线索 · {item.title}")
     return {"id":ident}

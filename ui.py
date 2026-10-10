@@ -1,5 +1,7 @@
 import os
 import base64
+import uuid
+from urllib.parse import urlencode
 from pathlib import Path
 import requests
 import streamlit as st
@@ -25,6 +27,9 @@ def api(method,path,*,binary=False,**kwargs):
         st.info("云端工作台正在准备中。你可以先浏览首页与平台介绍。")
         finish_and_stop()
     headers=dict(kwargs.pop('headers',{}))
+    if 'client_session' not in st.session_state:
+        st.session_state.client_session=uuid.uuid4().hex
+    headers['X-Seaseek-Session']=st.session_state.client_session
     if api_token:
         headers['Authorization']='Bearer '+api_token
     try:
@@ -55,9 +60,35 @@ def task_picker():
         finish_and_stop()
     ids=[t["id"] for t in tasks]
     current=st.session_state.get("active_task")
-    selected=st.selectbox("当前搜救任务",ids,index=ids.index(current) if current in ids else 0,format_func=lambda ident:next(t["name"] for t in tasks if t["id"]==ident))
+    if st.session_state.get('task_selection') not in ids:
+        st.session_state.task_selection=current if current in ids else ids[0]
+    selected=st.selectbox("当前搜救任务",ids,index=None,format_func=lambda ident:next(t["name"]+" · "+ident[:6] for t in tasks if t["id"]==ident),key='task_selection',persist_state='session')
+    if selected is None:
+        st.info('请选择要接续的任务。')
+        finish_and_stop()
     st.session_state.active_task=selected
+    with st.expander('手机接续 · 打开同一任务',icon=':material/devices:'):
+        link=share_link('imaging',selected)
+        st.code(link,language=None)
+        st.caption('在手机浏览器打开此链接即可进入同一任务。点击刷新可查看另一设备的新记录。')
+        st.link_button('打开任务采集页',link)
+    if st.button('刷新任务记录',icon=':material/refresh:',key='refresh_task'):
+        st.rerun()
     return next(t for t in tasks if t["id"]==selected)
+
+def share_link(page,task,clue=None):
+    from runtime import setting
+    base=setting('SEASEEK_PUBLIC_URL','https://seaseek.streamlit.app' if CLOUD else 'http://127.0.0.1:8505')
+    return base.rstrip('/')+'/'+page+'?'+urlencode(dict(task_id=task,**({'clue_id':clue} if clue else {})))
+
+def media(ident,kind,version='',size='preview'):
+    # Bounded per-browser cache; never expose service credentials to the client.
+    cache=st.session_state.setdefault('image_media',{})
+    key=(connection_settings(),ident,kind,version,size)
+    if key not in cache:
+        if len(cache)>=8:cache.pop(next(iter(cache)))
+        cache[key]=api('GET',f'/analyses/{ident}/media/{kind}',params={'size':size},binary=True)
+    return cache[key]
 
 def badge(status):
     color={"待核实":"orange","待分派":"blue","处理中":"blue","已完成":"green","已排除":"gray"}.get(status,"blue")

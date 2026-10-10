@@ -28,6 +28,14 @@ with p.open('x') as f:
 os.chmod(p,0o600)
 PY
 fi
+if ! grep -q '^HAIXUN_RESET_TOKEN=' /etc/seaseek/api.env; then
+    /opt/seaseek/python/bin/python3 - <<'PY'
+import secrets
+from pathlib import Path
+with Path('/etc/seaseek/api.env').open('a') as f:
+    f.write('HAIXUN_RESET_TOKEN='+secrets.token_urlsafe(24)+'\n')
+PY
+fi
 if test -d /opt/seaseek/.tmp/wheelhouse; then
     /opt/seaseek/.venv/bin/python -m pip install --no-cache-dir --no-index --find-links /opt/seaseek/.tmp/wheelhouse --find-links /opt/seaseek/.tmp/wheels torch==2.11.0+cpu torchvision==0.26.0+cpu -r /opt/seaseek/deploy/backend-requirements.txt
 elif test -d /opt/seaseek/.tmp/wheels; then
