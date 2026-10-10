@@ -1,6 +1,6 @@
 # 云端上线步骤
 
-状态：Streamlit 前端已部署至 https://seaseek.streamlit.app；阿里云统一后端已部署，公网 HTTPS 与真实检测/视频业务验收通过。Streamlit 仍需填写真实 Secrets，完整云端页面验收待完成。
+状态：Streamlit 前端 https://seaseek.streamlit.app 已保存真实 Secrets 并接通阿里云统一后端。公网 HTTPS、真实检测/视频业务、云端四个业务页及云端发起图片增强/检测、重新连接后读取标注结果均已验证通过。
 
 ## 1. 先浏览云端首页
 

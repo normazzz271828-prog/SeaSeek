@@ -6,7 +6,7 @@
 
 仓库：`normazzz271828-prog/SeaSeek`，分支 `main`，部署入口 **`cloud/streamlit_app.py`**，Python **3.12**。不要误选根目录的本地入口。
 
-前端已部署至 https://seaseek.streamlit.app；阿里云统一后端与临时 HTTPS API 已部署，并完成真实船舶检测、视频、协同业务及重启持久化验证。Streamlit 保存真实 Secrets 后才能接通业务，当前完整云端页面验收待完成。未配置 Secrets 时可浏览首页/关于页；业务页显示准备中，不创建云端数据库。
+前端 https://seaseek.streamlit.app 已接通阿里云统一后端与临时 HTTPS API，并完成真实船舶检测、视频、协同业务及重启持久化验证。云端四个业务页、从云端发起图片增强/检测及重新连接后读取标注结果验证通过。未配置 Secrets 时可浏览首页/关于页；业务页显示准备中，不创建云端数据库。
 
 在 Streamlit Secrets 填写 `cloud/secrets.example.toml` 中的实际 API 地址与服务密钥。真实配置通过本地私密文件交付，不进入 Git。完整步骤见 [部署说明](deploy/README.md)。根目录 requirements 是本地依赖，cloud/requirements.txt 是轻量前端依赖，deploy/backend-requirements.txt 是后端依赖。
 
