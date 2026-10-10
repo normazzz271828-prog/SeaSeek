@@ -1,10 +1,11 @@
 import streamlit as st
 import json
-from ui import ROOT
+from ui import ROOT, scene_style
 from app_pages.views import overview, imaging, situation, collaboration, about
 from app_pages.home import home
 
 st.set_page_config(page_title="海寻 SeaSeek · 海面搜救协同平台",page_icon=":material/radar:",layout="wide")
+st.html(scene_style())
 st.html((ROOT/"assets/style.css").read_text(encoding="utf-8"))
 st.html(ROOT/"assets/liquid.css")
 st.html((ROOT/"assets/page-motion.html").read_text(encoding="utf-8"),unsafe_allow_javascript=True)

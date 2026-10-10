@@ -5,6 +5,15 @@ from unittest.mock import patch,Mock
 
 
 class CloudContracts(unittest.TestCase):
+    def test_root_entry_hosted_binding_has_no_local_api_fallback(self):
+        import runtime
+        for address,cloud in [(None,True),('0.0.0.0',True),('127.0.0.1',False)]:
+            with patch.dict(os.environ,{},clear=True),patch.object(runtime.st,'secrets',{}),patch.object(runtime.st,'get_option',return_value=address):
+                importlib.reload(runtime)
+                self.assertEqual(runtime.CLOUD,cloud)
+                self.assertEqual(runtime.API,'' if cloud else 'http://127.0.0.1:8765')
+        importlib.reload(runtime)
+
     def test_cloud_has_no_local_api_fallback(self):
         import runtime
         with patch.dict(os.environ,{'SEASEEK_RUNTIME':'cloud'},clear=True),patch.object(runtime.st,'secrets',{}):

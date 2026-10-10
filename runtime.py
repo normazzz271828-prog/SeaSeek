@@ -12,6 +12,10 @@ def setting(name,default=""):
         return default
 
 
-CLOUD=os.environ.get('SEASEEK_RUNTIME')=='cloud'
+# A public/default listener is a hosted frontend, even if deployed with the
+# root entrypoint. Only an explicit local mode or loopback binding gets a
+# localhost API fallback. The cloud wrapper always chooses cloud explicitly.
+mode=os.environ.get('SEASEEK_RUNTIME')
+CLOUD=mode=='cloud' if mode else st.get_option('server.address') not in ('127.0.0.1','localhost','::1')
 API=setting('HAIXUN_API_URL','' if CLOUD else 'http://127.0.0.1:8765').rstrip('/')
 API_TOKEN=setting('HAIXUN_API_TOKEN')

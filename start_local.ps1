@@ -15,4 +15,5 @@ if ($apiPort) {
 } else {
     Start-Process -FilePath $pythonPath -ArgumentList '-m uvicorn backend:app --host 127.0.0.1 --port 8765' -WorkingDirectory $projectPath -WindowStyle Hidden
 }
+$env:SEASEEK_RUNTIME = 'local'
 & $pythonPath -m streamlit run streamlit_app.py --server.address 127.0.0.1 --server.port 8505

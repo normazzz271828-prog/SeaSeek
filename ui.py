@@ -1,10 +1,17 @@
 import os
+import base64
 from pathlib import Path
 import requests
 import streamlit as st
 from runtime import API, API_TOKEN, CLOUD
 
 ROOT=Path(__file__).resolve().parent
+
+@st.cache_data(max_entries=1,show_spinner=False)
+def scene_style():
+    # Embedded, optimized asset avoids relying on a host's static-file route.
+    image=base64.b64encode((ROOT/'static/rescue-background.jpg').read_bytes()).decode('ascii')
+    return '<style>:root{--hx-scene-image:url("data:image/jpeg;base64,'+image+'");}</style>'
 
 def finish_and_stop():
     # st.stop interrupts script execution before the entrypoint's finally can enqueue.
