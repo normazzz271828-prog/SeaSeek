@@ -62,19 +62,22 @@ def task_picker():
     current=st.session_state.get("active_task")
     if st.session_state.get('task_selection') not in ids:
         st.session_state.task_selection=current if current in ids else ids[0]
-    selected=st.selectbox("当前搜救任务",ids,index=None,format_func=lambda ident:next(t["name"]+" · "+ident[:6] for t in tasks if t["id"]==ident),key='task_selection',persist_state='session')
+    context,refresh=st.columns([5,1],vertical_alignment='bottom')
+    selected=context.selectbox("当前搜救任务",ids,index=None,format_func=lambda ident:next(t["name"]+" · "+ident[:6] for t in tasks if t["id"]==ident),key='task_selection',persist_state='session')
     if selected is None:
         st.info('请选择要接续的任务。')
         finish_and_stop()
     st.session_state.active_task=selected
-    with st.expander('手机接续 · 打开同一任务',icon=':material/devices:'):
-        link=share_link('imaging',selected)
-        st.code(link,language=None)
-        st.caption('在手机浏览器打开此链接即可进入同一任务。点击刷新可查看另一设备的新记录。')
-        st.link_button('打开任务采集页',link)
-    if st.button('刷新任务记录',icon=':material/refresh:',key='refresh_task'):
+    if refresh.button('刷新',icon=':material/refresh:',key='refresh_task',width='stretch'):
         st.rerun()
     return next(t for t in tasks if t["id"]==selected)
+
+def capture_handoff(task):
+    with st.popover('手机接续',icon=':material/devices:'):
+        link=share_link('imaging',task['id'])
+        st.caption('把链接发到手机，在同一任务里拍照或上传。另一设备提交后，点击刷新查看新记录。')
+        st.code(link,language=None)
+        st.link_button('打开任务采集页',link)
 
 def share_link(page,task,clue=None):
     from runtime import setting

@@ -9,10 +9,24 @@ import pydeck as pdk
 import streamlit as st
 from PIL import Image
 
-from ui import ROOT, api, badge, task_picker, title, media, share_link
+from ui import ROOT, api, badge, task_picker, title, media, share_link, capture_handoff
 from runtime import CLOUD
 
 METHODS={"自动增强":"adaptive","提亮暗部":"gamma_light","压低过亮区域":"gamma_dark","局部对比度":"clahe","温和去雾":"dehaze_mix","保留原图":"original"}
+
+def page_items(items,key,size=3):
+    pages=max(1,(len(items)+size-1)//size)
+    page=min(max(0,st.session_state.get(key,0)),pages-1)
+    st.session_state[key]=page
+    previous,label,following=st.columns([1,2,1],vertical_alignment='center')
+    if previous.button('上一页',key=key+'_previous',disabled=page==0,width='stretch'):
+        st.session_state[key]=page-1
+        st.rerun()
+    label.caption(f'第 {page+1} / {pages} 页 · 共 {len(items)} 条')
+    if following.button('下一页',key=key+'_next',disabled=page==pages-1,width='stretch'):
+        st.session_state[key]=page+1
+        st.rerun()
+    return items[page*size:(page+1)*size]
 
 def overview():
     st.html('<section class="hero"><div class="eyebrow">SeaSeek · MARITIME SEARCH & RESCUE</div><h1>海寻<span>.</span></h1><p class="subtitle">融合 PAC-Net 特征增强的海面搜救协同平台</p><p class="tagline">以影像为线索，向希望靠近。</p><span class="tag">影像感知 / 线索态势 / 协同响应</span></section>')
@@ -62,7 +76,7 @@ def overview():
     main,side=st.columns([1.7,1])
     with main:
         st.subheader("当前任务")
-        for task in tasks:
+        for task in page_items(tasks,'overview_tasks'):
             with st.container(border=True,key=f"glass_task_{task['id']}"):
                 st.markdown(f"### {task['name']}")
                 st.caption(f"{task['area']} · 负责人：{task['owner']} · {task['created']}")
@@ -74,7 +88,7 @@ def overview():
     with side:
         st.subheader("最近动态")
         events=snapshot['events']
-        for item in sorted(events,key=lambda e:(e["created"],e["id"]),reverse=True)[:7]:
+        for item in page_items(sorted(events,key=lambda e:(e["created"],e["id"]),reverse=True),'overview_events'):
             with st.container(border=True,key=f"glass_event_{item['id']}"):
                 st.caption(item["created"])
                 st.write(item["message"])
@@ -100,10 +114,11 @@ def imaging():
     image_tab,video_tab=st.tabs(["图片分析","视频演示"],key="analysis_tab",on_change="rerun")
     if image_tab.open:
         with image_tab:
-            controls,viewer=st.columns([1,2.4])
-            with controls:
-                with st.container(border=True,key="glass_analysis_controls"):
-                    st.subheader("分析设置")
+            with st.container(border=True,key="glass_analysis_controls"):
+                source_col,settings_col=st.columns([1,1],gap="large")
+                with source_col:
+                    st.subheader("现场影像")
+                    capture_handoff(task)
                     source=st.segmented_control("影像来源",["手机拍照","上传图片","示例图片"],default="示例图片")
                     uploaded=None
                     examples=sorted((ROOT/"assets/examples").glob("*.jpg"))
@@ -117,6 +132,8 @@ def imaging():
                         st.caption("来源：授权复用项目的训练图片；用于界面演示。")
                     else:
                         st.info("暂无示例，请上传图片。")
+                with settings_col:
+                    st.subheader("分析设置")
                     method=st.selectbox("增强方法",list(METHODS))
                     detect_ships=st.checkbox("同时标注船舶",value=True)
                     confidence=st.slider("模型置信度阈值",.05,.95,.25,.05)
@@ -134,23 +151,24 @@ def imaging():
                                     st.write("执行船舶检测并绘制旋转框")
                                     api("POST",f"/analyses/{result['id']}/detect",json=dict(confidence=confidence,source="original"))
                                 status.update(label="分析完成，结果已保存",state="complete",expanded=False)
-                history=api("GET","/analyses",params={"task_id":task["id"]})
-                if history:
-                    ids=[a["id"] for a in history]
-                    selected=st.session_state.get("analysis_id")
-                    selected=st.selectbox("已保存的分析",ids,index=ids.index(selected) if selected in ids else 0,format_func=lambda ident:next(f"{a['name']} · {a['created']} · {ident[:6]}" for a in history if a["id"]==ident))
-                    st.session_state.analysis_id=selected
-            with viewer:
-                if not history:
-                    with st.container(border=True,key="glass_analysis_empty"):
-                        st.subheader("等待一张现场影像")
-                        st.caption("选择示例或上传图片，开始分析后查看原图与增强结果。")
-                        if source=="示例图片" and examples:
-                            st.image(str(sample),width="stretch")
-                else:
-                    result=api("GET",f"/analyses/{selected}")
-                    detection=result.get('detection')
-                    st.caption(f"{result['name']} · {result['width']} × {result['height']} · 实际方法：{result['selected']}")
+            history=api("GET","/analyses",params={"task_id":task["id"]})
+            if history:
+                ids=[a["id"] for a in history]
+                selected=st.session_state.get("analysis_id")
+                selected=st.selectbox("已保存的分析",ids,index=ids.index(selected) if selected in ids else 0,format_func=lambda ident:next(f"{a['name']} · {a['created']} · {ident[:6]}" for a in history if a["id"]==ident))
+                st.session_state.analysis_id=selected
+            if not history:
+                with st.container(border=True,key="glass_analysis_empty"):
+                    st.subheader("等待一张现场影像")
+                    st.caption("选择示例或上传图片，开始分析后查看原图与增强结果。")
+                    if source=="示例图片" and examples:
+                        st.image(str(sample),width="stretch")
+            else:
+                result=api("GET",f"/analyses/{selected}")
+                detection=result.get('detection')
+                st.caption(f"{result['name']} · {result['width']} × {result['height']} · 实际方法：{result['selected']}")
+                canvas,details=st.columns([1.8,1],gap="large")
+                with canvas:
                     options=["船舶标注","并排对比","原图","增强结果"] if detection else ["并排对比","原图","增强结果"]
                     view=st.segmented_control("查看方式",options,default=options[0],key=f"image_view_{selected}_{bool(detection)}")
                     if view=="并排对比":
@@ -161,17 +179,19 @@ def imaging():
                         st.image(media(selected,'detection',detection['created']),caption="旋转框 + 类别 + 模型置信度（待人工核实）",width="stretch")
                     else:
                         st.image(media(selected,'original' if view=='原图' or result['result_is_original'] else 'result'),width="stretch")
-                    if st.checkbox('准备高清图片下载',key=f'download_{selected}'):
-                        enhanced=media(selected,'result',size='full')
-                        original=media(selected,'original',size='full')
-                        canvas=Image.new('RGB',(result['width']*2,result['height']))
-                        canvas.paste(Image.open(io.BytesIO(original)),(0,0))
-                        canvas.paste(Image.open(io.BytesIO(enhanced)),(result['width'],0))
-                        out=io.BytesIO();canvas.save(out,format='PNG')
-                        a,b=st.columns(2)
-                        a.download_button('下载增强图片',enhanced,file_name='seaseek_enhanced.png',mime='image/png')
-                        b.download_button('下载对比图片',out.getvalue(),file_name='seaseek_comparison.png',mime='image/png')
-                        if detection:st.download_button('下载船舶标注图',media(selected,'detection',detection['created'],size='full'),file_name='seaseek_ships.png',mime='image/png')
+                    with st.expander("图片下载",icon=":material/download:"):
+                        if st.checkbox('准备高清图片下载',key=f'download_{selected}'):
+                            enhanced=media(selected,'result',size='full')
+                            original=media(selected,'original',size='full')
+                            canvas=Image.new('RGB',(result['width']*2,result['height']))
+                            canvas.paste(Image.open(io.BytesIO(original)),(0,0))
+                            canvas.paste(Image.open(io.BytesIO(enhanced)),(result['width'],0))
+                            out=io.BytesIO();canvas.save(out,format='PNG')
+                            a,b=st.columns(2)
+                            a.download_button('下载增强图片',enhanced,file_name='seaseek_enhanced.png',mime='image/png')
+                            b.download_button('下载对比图片',out.getvalue(),file_name='seaseek_comparison.png',mime='image/png')
+                            if detection:st.download_button('下载船舶标注图',media(selected,'detection',detection['created'],size='full'),file_name='seaseek_ships.png',mime='image/png')
+                with details:
                     if detection:
                         st.subheader(f"检测目标 · {len(detection['predictions'])}")
                         st.caption(f"检测输入：{'原图' if detection['source']=='original' else '增强图'} · 阈值 {detection['confidence']:.0%}。结果为模型预测，不是数据集真值或识别准确率。")
@@ -208,7 +228,25 @@ def imaging():
 def video_panel(task):
     st.subheader("短视频船舶检测")
     st.caption("上传真实短片，或用训练图片组成的演示片体验流程。最高 1080p、30 秒、12 MB；抽帧结果无音频，不做目标跟踪或唯一船舶计数。")
-    a,b=st.columns([1,2])
+    if st.session_state.pop('video_open_result',False):
+        st.session_state.video_workspace='查看结果'
+    workspace=st.segmented_control('视频工作区',['提交素材','查看结果'],default='提交素材',key='video_workspace')
+    if workspace=='查看结果':
+        items=api('GET','/videos',params={'task_id':task['id']})
+        if not items:
+            st.info('该任务还没有视频记录。切换到“提交素材”上传短片或使用演示片。')
+            return
+        ids=[v['id'] for v in items]
+        current=st.session_state.get('video_id')
+        ident=st.selectbox('视频任务记录',ids,index=ids.index(current) if current in ids else 0,format_func=lambda ident:next(v['name']+' · '+v['created']+' · '+ident[:6] for v in items if v['id']==ident))
+        st.session_state.video_id=ident
+        item=next(v for v in items if v['id']==ident)
+        if item['status'] in ('queued','running'):
+            video_result(ident,task)
+        else:
+            show_video_status(ident,task,api('GET',f'/videos/{ident}'))
+        return
+    a,b=st.columns([1,2],gap='large')
     with a:
         uploaded=st.file_uploader("上传 MP4",type=['mp4'],max_upload_size=12,key='video_upload')
         demo=ROOT/'assets/demo_ships.mp4'
@@ -220,23 +258,14 @@ def video_panel(task):
             if content:
                 item=api('POST','/videos',params=dict(task_id=task['id'],name='训练图片合成演示片.mp4' if use_demo else uploaded.name,confidence=conf,sample_fps=rate),data=content,headers={'Content-Type':'video/mp4'})
                 st.session_state.video_id=item['id']
+                st.session_state.video_open_result=True
                 st.rerun()
             else:st.warning('请选择视频。')
     with b:
         if uploaded and not use_demo:st.video(uploaded.getvalue())
-        elif demo.exists():
+        elif use_demo and demo.exists():
             st.video(str(demo))
             st.caption('以上为训练集静态图片合成，非真实航拍视频。检测仍由模型实际执行。')
-    items=api('GET','/videos',params={'task_id':task['id']})
-    if items:
-        ids=[v['id'] for v in items]
-        current=st.session_state.get('video_id')
-        ident=st.selectbox('视频任务记录',ids,index=ids.index(current) if current in ids else 0,format_func=lambda ident:next(v['name']+' · '+v['created'] for v in items if v['id']==ident))
-        item=next(v for v in items if v['id']==ident)
-        if item['status'] in ('queued','running'):
-            video_result(ident,task)
-        else:
-            show_video_status(ident,task,api('GET',f'/videos/{ident}'))
 
 @st.fragment(run_every='3s')
 def video_result(ident,task):
@@ -262,22 +291,27 @@ def video_completed(ident,task,result):
     data=result['results']
     st.success(f"检测完成 · {len(data['frames'])} 个抽样帧 · {data['sample_fps']:g} 帧/秒")
     st.caption('视频播放的是抽样帧标注结果。抽帧可能遗漏短暂出现的目标；各帧目标数不代表唯一船舶数。')
-    video=api('GET',f'/videos/{ident}/media/result',binary=True)
-    st.video(video)
     records=data['frames']
-    st.dataframe(pd.DataFrame([dict(时间秒=r['time'],该帧目标数=len(r['predictions']),类别='、'.join(sorted({p['category'] for p in r['predictions']}))) for r in records]),hide_index=True)
-    index=st.select_slider('关键帧切换（抽样帧）',options=list(range(len(records))),format_func=lambda i:f"{records[i]['time']:.1f}s",key=f'frame_{ident}')
-    st.image(api('GET',f'/videos/{ident}/frames/{index}',binary=True),caption=f"{records[index]['time']:.1f}s · {len(records[index]['predictions'])} 个预测目标",width='stretch')
-    st.download_button('下载标注视频',video,file_name='seaseek_video.mp4',mime='video/mp4',key=f'video_media_download_{ident}')
-    st.download_button('下载逐帧检测记录',json.dumps(data,ensure_ascii=False,indent=2),file_name='haixun_video.json',mime='application/json',key=f'video_download_{ident}')
-    with st.form(f'video_clue_{ident}'):
-        title_text=st.text_input('视频线索标题',value=f"视频 {records[index]['time']:.1f}s 疑似船舶")
-        note=st.text_area('人工核实备注')
-        if st.form_submit_button('提交视频线索',type='primary'):
-            if not title_text.strip():st.warning('请填写标题。')
-            else:
-                api('POST',f'/videos/{ident}/clues',json=dict(frame_index=index,title=title_text,notes=note))
-                st.success('视频线索已保存。')
+    playback,frames=st.tabs(['标注视频','关键帧核实'],key=f'video_result_view_{ident}',on_change='rerun')
+    if playback.open:
+        with playback:
+            video=api('GET',f'/videos/{ident}/media/result',binary=True)
+            st.video(video)
+            st.download_button('下载标注视频',video,file_name='seaseek_video.mp4',mime='video/mp4',key=f'video_media_download_{ident}')
+    if frames.open:
+        with frames:
+            st.dataframe(pd.DataFrame([dict(时间秒=r['time'],该帧目标数=len(r['predictions']),类别='、'.join(sorted({p['category'] for p in r['predictions']}))) for r in records]),hide_index=True)
+            index=st.select_slider('关键帧切换（抽样帧）',options=list(range(len(records))),format_func=lambda i:f"{records[i]['time']:.1f}s",key=f'frame_{ident}')
+            st.image(api('GET',f'/videos/{ident}/frames/{index}',binary=True),caption=f"{records[index]['time']:.1f}s · {len(records[index]['predictions'])} 个预测目标",width='stretch')
+            st.download_button('下载逐帧检测记录',json.dumps(data,ensure_ascii=False,indent=2),file_name='haixun_video.json',mime='application/json',key=f'video_download_{ident}')
+            with st.form(f'video_clue_{ident}'):
+                title_text=st.text_input('视频线索标题',value=f"视频 {records[index]['time']:.1f}s 疑似船舶")
+                note=st.text_area('人工核实备注')
+                if st.form_submit_button('提交视频线索',type='primary'):
+                    if not title_text.strip():st.warning('请填写标题。')
+                    else:
+                        api('POST',f'/videos/{ident}/clues',json=dict(frame_index=index,title=title_text,notes=note))
+                        st.success('视频线索已保存。')
 
 def situation():
     title("LOCATE / VERIFY","线索态势","让线索拥有位置，让位置关联行动。")
