@@ -55,7 +55,9 @@
     if(landingLink&&!event.ctrlKey&&!event.metaKey&&!event.shiftKey&&event.button===0){
       const destination=new URL(landingLink.href,location.href);
       if(destination.origin===location.origin&&!destination.hash){
-        const nav=Array.from(document.querySelectorAll('[data-testid="stTopNavLink"]')).find(item=>new URL(item.href).pathname===destination.pathname);
+        // Community Cloud's embedded app prefixes native routes with /~/+/.
+        const routePath=url=>url.pathname.replace(/^\/~\/\+\//,'/');
+        const nav=Array.from(document.querySelectorAll('[data-testid="stTopNavLink"]')).find(item=>routePath(new URL(item.href))===routePath(destination));
         if(nav){event.preventDefault();nav.click();return;}
       }
       if(destination.hash==='#capabilities'){
