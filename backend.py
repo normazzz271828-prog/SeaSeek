@@ -138,6 +138,16 @@ def tasks():
     with db() as con:
         return [dict(r) for r in con.execute("SELECT * FROM tasks ORDER BY created DESC,rowid DESC")]
 
+@app.get('/overview')
+def overview_snapshot():
+    # One network round trip regardless of task count; never include media BLOBs.
+    with db() as con:
+        return {
+            'tasks':[dict(r) for r in con.execute('SELECT * FROM tasks ORDER BY created DESC,rowid DESC')],
+            'clues':[dict(r) for r in con.execute('SELECT task_id,status FROM clues')],
+            'events':[dict(r) for r in con.execute('SELECT * FROM events ORDER BY created DESC,id DESC LIMIT 7')],
+        }
+
 @app.post("/tasks")
 def create_task(item: Task):
     ident = uuid.uuid4().hex

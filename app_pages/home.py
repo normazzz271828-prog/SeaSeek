@@ -11,7 +11,7 @@ def home():
     content=re.sub(r'<a href="http://127.0.0.1:8505/about"[^>]*>.*?</a>','',content)
     content=content.replace('http://127.0.0.1:8505"','/overview"').replace('http://127.0.0.1:8505/','/')
     content=content.replace(' target="_blank" rel="noopener"','').replace('hero','landing-hero')
-    content=content.replace('首页视觉预览 · 背景为 AI 创作场景 · 算法接入状态以工作台为准','背景为 AI 创作场景 · 算法接入状态以工作台为准')
+    content=content.replace('首页视觉预览 · 背景为 AI 创作场景 · 算法接入状态以工作台为准','比赛演示环境 · 演练位置为模拟 · 背景为 AI 创作场景 · 算法接入状态以工作台为准')
     def icon_image(match):
         svg=match.group(0).replace('<svg ','<svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="#a0ddd9" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" ',1)
         return '<img class="landing-icon" alt="" aria-hidden="true" src="data:image/svg+xml,'+quote(svg,safe='')+'">'

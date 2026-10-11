@@ -36,8 +36,9 @@ def overview():
             st.session_state.active_task='demo-coastal'
             st.success('演示任务已恢复。')
             st.rerun()
-    tasks=api("GET","/tasks")
-    clues=[c for t in tasks for c in api("GET","/clues",params={"task_id":t["id"]})]
+    snapshot=api('GET','/overview')
+    tasks=snapshot['tasks']
+    clues=snapshot['clues']
     for col,label,value in zip(st.columns(4),["进行中任务","待核实线索","处理中线索","已完成线索"],[len([t for t in tasks if t["status"]=="进行中"]),sum(c["status"]=="待核实" for c in clues),sum(c["status"]=="处理中" for c in clues),sum(c["status"]=="已完成" for c in clues)]):
         col.metric(label,value)
     st.space("small")
@@ -72,9 +73,7 @@ def overview():
                     st.switch_page(st.Page(imaging,title="影像分析"))
     with side:
         st.subheader("最近动态")
-        events=[]
-        for task in tasks:
-            events.extend(api("GET",f"/report/{task['id']}")["events"])
+        events=snapshot['events']
         for item in sorted(events,key=lambda e:(e["created"],e["id"]),reverse=True)[:7]:
             with st.container(border=True,key=f"glass_event_{item['id']}"):
                 st.caption(item["created"])
@@ -388,7 +387,7 @@ def about():
     with b:
         with st.container(border=True,key="glass_about_next"):
             st.subheader("待接入")
-            st.markdown("- PAC-Net 海面适配与对照验证\n- 落水人员等搜救目标与视频跟踪\n- 统一登录、角色权限与任务成员隔离\n- 云端、正式网页与微信小程序")
+            st.markdown("- PAC-Net 海面适配与对照验证\n- 落水人员等搜救目标与视频跟踪\n- 个人账号与权限（按需扩展）\n- 独立域名网页端与微信小程序")
     st.info("当前为演示界面，尚未接入个人账号和角色权限。负责人姓名是业务记录字段。" if CLOUD else "当前仅监听本机地址，属于本地演示模式。姓名是业务记录字段，不是登录认证。")
     st.subheader("四端约定")
     st.markdown("本地端 → Streamlit 云端验证 → 独立域名网页端 / 微信小程序端。四端使用统一业务规则与后端数据源，界面按场景适配。")

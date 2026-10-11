@@ -58,6 +58,14 @@ class DemoV2(unittest.TestCase):
         self.assertEqual(response.json()['width'],120)
         self.assertEqual(self.client.post('/analyses/upload',params=dict(task_id=self.task,name='too-large.jpg'),content=b'x'*(12*1024*1024+1)).status_code,413)
 
+    def test_overview_is_one_lightweight_snapshot(self):
+        self.client.post('/clues',json=dict(task_id=self.task,title='总览线索'))
+        snapshot=self.client.get('/overview').json()
+        self.assertIn(self.task,[r['id'] for r in snapshot['tasks']])
+        self.assertIn({'task_id':self.task,'status':'待核实'},snapshot['clues'])
+        self.assertLessEqual(len(snapshot['events']),7)
+        self.assertNotIn('analyses',snapshot)
+
     def test_reset_is_scoped_and_requires_remote_management_code(self):
         self.client.post('/demo')
         ident=self.image('demo-coastal')
@@ -79,6 +87,37 @@ class DemoV2(unittest.TestCase):
             response=self.client.post('/analyses',json=dict(task_id=self.task,name='bad',image='bad',method='original'))
             self.assertEqual(response.status_code,429)
         finally:backend._image_lock.release()
+
+    def test_same_name_task_and_clue_feedback_survive_rerun(self):
+        import sys
+        from pathlib import Path
+        sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+        import ui
+        from urllib.parse import urlsplit
+        from streamlit.testing.v1 import AppTest
+        second=self.client.post('/tasks',json=dict(name='二版验证',area='模拟海域',owner='另一个人')).json()['id']
+        clue=self.client.post('/clues',json=dict(task_id=self.task,title='同名线索')).json()['id']
+        self.client.post('/clues',json=dict(task_id=self.task,title='同名线索'))
+        def request(method,url,**kwargs):
+            kwargs.pop('timeout',None);kwargs.pop('allow_redirects',None)
+            return self.client.request(method,urlsplit(url).path,**kwargs)
+        with patch.object(ui,'connection_settings',return_value=('https://api.example','')),patch.object(ui.requests,'request',side_effect=request):
+            app=AppTest.from_string('from app_pages.views import collaboration\ncollaboration()',default_timeout=20)
+            app.session_state.active_task=self.task
+            app.session_state.task_selection=self.task
+            app.session_state.clue_selection=clue
+            app.session_state.open_feedback=True
+            app.run()
+            self.assertFalse(app.exception)
+            app.text_input[0].set_value('现场演示员')
+            app.text_area[0].set_value('手机提交反馈')
+            next(b for b in app.button if b.label=='保存处置更新').click().run()
+            self.assertFalse(app.exception)
+        rows=self.client.get('/clues',params={'task_id':self.task}).json()
+        selected=next(r for r in rows if r['id']==clue)
+        self.assertEqual(selected['assignee'],'现场演示员')
+        self.assertIn('手机提交反馈',selected['notes'])
+        self.assertEqual(self.client.get('/clues',params={'task_id':second}).json(),[])
 
 
 if __name__=='__main__':unittest.main()
