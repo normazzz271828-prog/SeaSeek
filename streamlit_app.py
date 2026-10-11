@@ -1,8 +1,25 @@
 import streamlit as st
 import json
-from ui import ROOT, scene_style
-from app_pages.views import overview, imaging, situation, collaboration, about
-from app_pages.home import home
+import importlib
+import hashlib
+from pathlib import Path
+
+ROOT=Path(__file__).resolve().parent
+
+@st.cache_resource(max_entries=1,show_spinner=False)
+def load_pages(revision):
+    # Cloud can update the entrypoint without evicting imported page modules.
+    # Reload once per reviewed source revision, not on each widget interaction.
+    ui=importlib.reload(importlib.import_module('ui'))
+    views=importlib.reload(importlib.import_module('app_pages.views'))
+    landing=importlib.reload(importlib.import_module('app_pages.home'))
+    return ui,views,landing
+
+revision=hashlib.sha256(b''.join((ROOT/name).read_bytes() for name in ('ui.py','app_pages/views.py','app_pages/home.py'))).hexdigest()
+ui,views,landing=load_pages(revision)
+scene_style=ui.scene_style
+overview,imaging,situation,collaboration,about=(getattr(views,name) for name in ('overview','imaging','situation','collaboration','about'))
+home=landing.home
 
 st.set_page_config(page_title="海寻 SeaSeek · 海面搜救协同平台",page_icon=":material/radar:",layout="wide")
 # Deep links contain stable business IDs, separate from formatted widget labels.
