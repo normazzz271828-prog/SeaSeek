@@ -339,6 +339,24 @@ _video_jobs={}
 def video_dir(ident):
     return STORE/'videos'/ident
 
+def demo_video_samples():
+    directory=STORE/'demo-videos'
+    manifest=directory/'manifest.json'
+    if not manifest.is_file():return []
+    items=json.loads(manifest.read_text(encoding='utf-8'))
+    return [item for item in items if Path(item['file']).name==item['file'] and (directory/item['file']).is_file()]
+
+@app.get('/video-samples')
+def video_samples():
+    fields=('id','label','purpose','seconds','width','height','bytes','source','provenance','sha256')
+    return [{key:item[key] for key in fields} for item in demo_video_samples()]
+
+@app.get('/video-samples/{ident}/media')
+def video_sample_media(ident: str):
+    item=next((item for item in demo_video_samples() if item['id']==ident),None)
+    if item is None:raise HTTPException(404,'演示素材不存在')
+    return FileResponse(STORE/'demo-videos'/item['file'],media_type='video/mp4')
+
 def video_worker(ident):
     import cv2
     import math

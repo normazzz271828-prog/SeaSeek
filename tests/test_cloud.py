@@ -1,7 +1,12 @@
 import importlib
 import os
+import tempfile
 import unittest
 from unittest.mock import patch,Mock
+
+# Single-file test runs must not initialize or update the user's real database.
+TEMP=tempfile.TemporaryDirectory()
+os.environ['HAIXUN_DATA_DIR']=TEMP.name
 
 
 class CloudContracts(unittest.TestCase):

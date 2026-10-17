@@ -227,7 +227,7 @@ def imaging():
 
 def video_panel(task):
     st.subheader("短视频船舶检测")
-    st.caption("上传真实短片，或用训练图片组成的演示片体验流程。最高 1080p、30 秒、12 MB；抽帧结果无音频，不做目标跟踪或唯一船舶计数。")
+    st.caption("选择实拍短片或上传自己的视频。最高 1080p、30 秒、12 MB；抽帧结果无音频，不做目标跟踪或唯一船舶计数。")
     if st.session_state.pop('video_open_result',False):
         st.session_state.video_workspace='查看结果'
     workspace=st.segmented_control('视频工作区',['提交素材','查看结果'],default='提交素材',key='video_workspace')
@@ -248,24 +248,57 @@ def video_panel(task):
         return
     a,b=st.columns([1,2],gap='large')
     with a:
-        uploaded=st.file_uploader("上传 MP4",type=['mp4'],max_upload_size=12,key='video_upload')
+        source=st.segmented_control('视频来源',['实拍示例','上传视频','合成演示'],default='实拍示例',key='video_source')
+        content=None
+        name=''
+        sample=None
         demo=ROOT/'assets/demo_ships.mp4'
-        use_demo=st.checkbox("使用训练图片合成演示片",value=uploaded is None,disabled=not demo.exists())
+        if source=='实拍示例':
+            samples=api('GET','/video-samples')
+            if samples:
+                ident=st.selectbox('实拍短片',[item['id'] for item in samples],format_func=lambda ident:next(item['label'] for item in samples if item['id']==ident))
+                sample=next(item for item in samples if item['id']==ident)
+                st.caption(f"{sample['seconds']:g} 秒 · {sample['width']} × {sample['height']} · {sample['bytes']/1024/1024:.1f} MB")
+                st.caption(sample['purpose'])
+                name=sample['label']+'.mp4'
+                # Keep at most one small input preview per session; do not fetch other clips.
+                cached=st.session_state.get('video_sample_preview')
+                identity=(task['id'],ident,sample['sha256'])
+                if not cached or cached[0]!=identity:
+                    cached=(identity,api('GET',f'/video-samples/{ident}/media',binary=True))
+                    st.session_state.video_sample_preview=cached
+                content=cached[1]
+            else:st.info('实拍素材尚未安装，可先上传视频或选择合成演示。')
+        elif source=='上传视频':
+            uploaded=st.file_uploader("上传 MP4",type=['mp4'],max_upload_size=12,key='video_upload')
+            if uploaded:
+                content=uploaded.getvalue()
+                name=uploaded.name
+        elif source=='合成演示' and demo.exists():
+            content=demo.read_bytes()
+            name='训练图片合成演示片.mp4'
         rate=st.select_slider("每秒检测帧数",[.5,1.,2.],value=1.)
         conf=st.slider("视频模型置信度阈值",.05,.95,.25,.05,key='video_conf')
         if st.button("提交后台检测",type='primary',icon=':material/play_arrow:'):
-            content=demo.read_bytes() if use_demo and demo.exists() else (uploaded.getvalue() if uploaded else None)
             if content:
-                item=api('POST','/videos',params=dict(task_id=task['id'],name='训练图片合成演示片.mp4' if use_demo else uploaded.name,confidence=conf,sample_fps=rate),data=content,headers={'Content-Type':'video/mp4'})
+                item=api('POST','/videos',params=dict(task_id=task['id'],name=name,confidence=conf,sample_fps=rate),data=content,headers={'Content-Type':'video/mp4'})
                 st.session_state.video_id=item['id']
                 st.session_state.video_open_result=True
                 st.rerun()
             else:st.warning('请选择视频。')
     with b:
-        if uploaded and not use_demo:st.video(uploaded.getvalue())
-        elif use_demo and demo.exists():
-            st.video(str(demo))
-            st.caption('以上为训练集静态图片合成，非真实航拍视频。检测仍由模型实际执行。')
+        with st.container(border=True,key='glass_video_preview'):
+            st.subheader('素材预览')
+            if content:st.video(content)
+            else:st.info('选择一段短片后在此预览。')
+            st.caption('此处仅播放输入素材；点击“提交后台检测”后才运行模型。')
+            if sample:
+                with st.expander('素材来源与适用范围'):
+                    st.write(sample['source'])
+                    st.caption(sample['provenance'])
+            elif source=='合成演示':
+                st.caption('训练集静态图片合成，非真实航拍视频。')
+        st.warning('当前模型训练类别为九类船舶，对小艇、帆船和摩托艇可能漏检或误分类。检测类别及置信度仅为预测，需人工核实。')
 
 @st.fragment(run_every='3s')
 def video_result(ident,task):
@@ -291,6 +324,7 @@ def video_completed(ident,task,result):
     data=result['results']
     st.success(f"检测完成 · {len(data['frames'])} 个抽样帧 · {data['sample_fps']:g} 帧/秒")
     st.caption('视频播放的是抽样帧标注结果。抽帧可能遗漏短暂出现的目标；各帧目标数不代表唯一船舶数。')
+    st.caption('实拍素材存在模型类别差异，框出目标不代表船型判断正确。')
     records=data['frames']
     playback,frames=st.tabs(['标注视频','关键帧核实'],key=f'video_result_view_{ident}',on_change='rerun')
     if playback.open:
