@@ -49,9 +49,8 @@ def api(method,path,*,binary=False,**kwargs):
         finish_and_stop()
 
 def title(kicker,heading,description):
-    st.caption(kicker)
-    st.title(heading)
-    st.caption(description)
+    import html
+    st.html(f'<section class="work-heading"><span>{html.escape(kicker)}</span><h1>{html.escape(heading)}</h1><p>{html.escape(description)}</p></section>')
 
 def task_picker():
     tasks=api("GET","/tasks")

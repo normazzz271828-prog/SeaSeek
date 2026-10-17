@@ -4,6 +4,9 @@ import io
 import json
 import os
 import hmac
+import hashlib
+import logging
+import math
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -32,7 +35,8 @@ from algorithms.dehazing import enhance as dehaze
 ROOT = Path(__file__).resolve().parent
 STORE = Path(os.environ.get("HAIXUN_DATA_DIR", ROOT / "data"))
 STORE.mkdir(parents=True, exist_ok=True)
-app = FastAPI(title="海寻统一业务 API", version="0.3.0")
+app = FastAPI(title="海寻统一业务 API", version="0.4.0")
+logger=logging.getLogger('seaseek')
 API_MODE=os.environ.get('SEASEEK_API_MODE','local')
 API_TOKEN=os.environ.get('HAIXUN_API_TOKEN','')
 RESET_TOKEN=os.environ.get('HAIXUN_RESET_TOKEN','')
@@ -49,18 +53,29 @@ async def service_access(request,call_next):
         if not hmac.compare_digest(supplied.encode(),('Bearer '+API_TOKEN).encode()):
             return JSONResponse(status_code=401,content={'detail':'服务访问未授权'})
     if request.method in ('POST','PATCH'):
-        if int(request.headers.get('content-length','0') or 0)>17_000_000:
+        try:
+            length=int(request.headers.get('content-length','0') or 0)
+            if length<0:raise ValueError()
+        except ValueError:
+            return JSONResponse(status_code=400,content={'detail':'上传长度无效'})
+        if length>17_000_000:
             return JSONResponse(status_code=413,content={'detail':'上传超过演示环境限制'})
+        # Expensive inference and ordinary writes have independent budgets.
+        path=request.url.path
+        expensive=request.method=='POST' and (path in ('/analyses','/analyses/upload','/videos') or (path.startswith('/analyses/') and path.endswith('/detect')))
         session=request.headers.get('X-Seaseek-Session','')[:64] or (request.client.host if request.client else 'unknown')
         tick=time.monotonic()
         with _quota_lock:
             for key in list(_quota):
                 while _quota[key] and _quota[key][0]<tick-3600:_quota[key].popleft()
                 if not _quota[key]:del _quota[key]
-            keys=[('global',240),(session,60)]
+            keys=[('global',240),('compute-'+session,60)] if expensive else [('write-global',1200),('write-'+session,300)]
+            if path.startswith('/admin/') or path=='/demo/reset':keys=[]
             if request.url.path in ('/analyses','/analyses/upload'):keys += [('image-global',100),('image-'+session,20)]
-            if any(len(_quota.get(key,()))>=limit for key,limit in keys):
-                return JSONResponse(status_code=429,content={'detail':'演示使用额度已达上限，请稍后再试'},headers={'Retry-After':'3600'})
+            blocked=[key for key,limit in keys if len(_quota.get(key,()))>=limit]
+            if blocked:
+                retry=max(1,math.ceil(max(_quota[key][0]+3600-tick for key in blocked)))
+                return JSONResponse(status_code=429,content={'detail':f"{'分析' if expensive else '普通操作'}额度已达上限，约 {math.ceil(retry/60)} 分钟后可重试；分析额度不影响反馈与报告"},headers={'Retry-After':str(retry)})
             for key,_ in keys:_quota.setdefault(key,deque()).append(tick)
     return await call_next(request)
 STATUSES = ["待核实", "待分派", "处理中", "已完成", "已排除"]
@@ -92,6 +107,7 @@ with db() as con:
     CREATE TABLE IF NOT EXISTS videos(id TEXT PRIMARY KEY,task_id TEXT REFERENCES tasks(id),name TEXT,status TEXT,progress REAL,error TEXT,confidence REAL,sample_fps REAL,created TEXT);
     CREATE TABLE IF NOT EXISTS video_clues(clue_id TEXT PRIMARY KEY REFERENCES clues(id),video_id TEXT REFERENCES videos(id),frame_index INTEGER,time REAL);
     CREATE TABLE IF NOT EXISTS reviews(analysis_id TEXT PRIMARY KEY REFERENCES analyses(id),decision TEXT,created TEXT);
+    CREATE TABLE IF NOT EXISTS feedback_requests(clue_id TEXT REFERENCES clues(id) ON DELETE CASCADE,request_id TEXT,payload TEXT,PRIMARY KEY(clue_id,request_id));
     """)
     con.execute("UPDATE videos SET status='failed',error='服务重启中断了处理，请重新提交' WHERE status IN ('queued','running')")
 
@@ -128,10 +144,22 @@ class Update(BaseModel):
     status: str
     assignee: str = Field(default="", max_length=50)
     feedback: str = Field(default="", max_length=2000)
+    request_id: str | None = Field(default=None,min_length=1,max_length=64)
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "mode": "shared backend" if API_MODE=='remote' else "local prototype", "version": "0.3.0"}
+    return {"status": "ok", "mode": "shared backend" if API_MODE=='remote' else "local prototype", "version": "0.4.0"}
+
+def require_management(request):
+    supplied=request.headers.get('X-Seaseek-Reset','')
+    if API_MODE=='remote' or RESET_TOKEN:
+        if not RESET_TOKEN or not hmac.compare_digest(supplied.encode(),RESET_TOKEN.encode()):
+            raise HTTPException(403,'此操作需要演示管理口令')
+
+def ensure_storage(incoming=0):
+    # Keep space for SQLite transactions, output frames and the shared host.
+    if shutil.disk_usage(STORE).free < 512*1024*1024+incoming:
+        raise HTTPException(507,'可用磁盘空间不足，请在任务总览的演示管理中预览并清理资源')
 
 @app.get("/tasks")
 def tasks():
@@ -174,9 +202,7 @@ def demo():
 
 @app.post('/demo/reset')
 def reset_demo(request: Request):
-    supplied=request.headers.get('X-Seaseek-Reset','')
-    if API_MODE=='remote' and (not RESET_TOKEN or not hmac.compare_digest(supplied.encode(),RESET_TOKEN.encode())):
-        raise HTTPException(403,'重置需要演示管理口令')
+    require_management(request)
     with _video_submit_lock, _image_lock:
         with db() as con:
             if con.execute("SELECT 1 FROM videos WHERE task_id='demo-coastal' AND status IN ('queued','running')").fetchone():
@@ -222,15 +248,21 @@ def image_bytes(row,kind):
     return row['original'] if kind=='result' and row['result'] is None else row[kind]
 
 @app.post("/analyses")
-@image_work
 def analyze(item: Analysis):
+    try:raw=base64.b64decode(item.image,validate=True)
+    except ValueError as exc:raise HTTPException(422,'图片无法读取或尺寸超过限制') from exc
+    return analyze_bytes(item.task_id,item.name,item.method,raw)
+
+@image_work
+def analyze_bytes(task_id,name,method,raw):
+    from types import SimpleNamespace
+    item=SimpleNamespace(task_id=task_id,name=name,method=method)
     methods = {"original","adaptive","gamma_light","gamma_dark","clahe","dehaze_mild","dehaze_mix","dehaze_adaptive"}
     if item.method not in methods:
         raise HTTPException(422,"不支持的增强方法")
     with db() as con:
         require(con,"tasks",item.task_id)
     try:
-        raw = base64.b64decode(item.image, validate=True)
         if len(raw)>12*1024*1024:
             raise ValueError("文件超过 12 MB")
         with Image.open(io.BytesIO(raw)) as source:
@@ -240,13 +272,18 @@ def analyze(item: Analysis):
         image.thumbnail((1600,1600))
     except (ValueError,UnidentifiedImageError,OSError,Image.DecompressionBombError) as exc:
         raise HTTPException(422, "图片无法读取或尺寸超过限制") from exc
+    ensure_storage(32*1024*1024)
     rgb = np.asarray(image)
     output, info = (dehaze if item.method.startswith("dehaze") else light_enhance)(rgb,item.method)
     ident = uuid.uuid4().hex
+    original=png(image)
+    result=None if np.array_equal(rgb,output) else png(Image.fromarray(output))
     with db() as con:
         if con.execute('SELECT COUNT(*) FROM analyses').fetchone()[0]>=500:
-            raise HTTPException(429,'演示影像存储已满，请联系管理者清理')
-        con.execute("INSERT INTO analyses VALUES(?,?,?,?,?,?,?,?,?,?)", (ident,item.task_id,item.name,item.method,info["selected"],png(image),None if np.array_equal(rgb,output) else png(Image.fromarray(output)),image.width,image.height,now()))
+            raise HTTPException(429,'演示影像存储已满，请在任务总览的演示管理中预览并清理资源')
+        if storage_summary()['image_bytes']+len(original)+len(result or b'')>512*1024*1024:
+            raise HTTPException(507,'影像容量已达上限，请在演示管理中预览并清理')
+        con.execute("INSERT INTO analyses VALUES(?,?,?,?,?,?,?,?,?,?)", (ident,item.task_id,item.name,item.method,info["selected"],original,result,image.width,image.height,now()))
         event(con,item.task_id,f"完成影像分析 · {item.name}")
     return {"id":ident,"selected":info["selected"],"width":image.width,"height":image.height}
 
@@ -261,9 +298,9 @@ async def upload_analysis(request: Request,task_id: str,name: str=Query(max_leng
     async for chunk in request.stream():
         raw.extend(chunk)
         if len(raw)>12*1024*1024:raise HTTPException(413,'图片超过 12 MB')
-    # Reuse exactly the same business validation; base64 stays inside the server.
+    # Both upload formats share validation without making another base64 copy.
     from starlette.concurrency import run_in_threadpool
-    return await run_in_threadpool(analyze,Analysis(task_id=task_id,name=name,method=method,image=base64.b64encode(raw).decode()))
+    return await run_in_threadpool(analyze_bytes,task_id,name,method,raw)
 
 @app.get("/analyses/{ident}")
 def analysis(ident: str):
@@ -325,9 +362,16 @@ def detect_image(ident: str,settings: DetectSettings):
         image=Image.open(io.BytesIO(image_bytes(row,settings.source))).convert('RGB')
         annotated,predictions=detect(np.asarray(image),settings.confidence)
     except Exception as exc:
-        raise HTTPException(503,f'检测失败：{exc}') from exc
+        logger.exception('Ship detection failed for %s',ident)
+        raise HTTPException(503,'船舶检测暂时失败，请重试；持续失败时请联系维护者') from exc
+    ensure_storage(16*1024*1024)
+    annotated_bytes=png(annotated)
     with db() as con:
-        con.execute('INSERT OR REPLACE INTO detections VALUES(?,?,?,?,?,?)',(ident,png(annotated),json.dumps(predictions,ensure_ascii=False),settings.confidence,settings.source,now()))
+        previous=con.execute('SELECT LENGTH(image) FROM detections WHERE analysis_id=?',(ident,)).fetchone()
+    if storage_summary()['image_bytes']-(previous[0] if previous else 0)+len(annotated_bytes)>512*1024*1024:
+        raise HTTPException(507,'影像容量已达上限，请在演示管理中预览并清理')
+    with db() as con:
+        con.execute('INSERT OR REPLACE INTO detections VALUES(?,?,?,?,?,?)',(ident,annotated_bytes,json.dumps(predictions,ensure_ascii=False),settings.confidence,settings.source,now()))
         con.execute('DELETE FROM reviews WHERE analysis_id=?',(ident,))
         event(con,row['task_id'],f"船舶检测 · {row['name']} · {len(predictions)} 个目标 · {'原图' if settings.source=='original' else '增强图'}")
     return {'count':len(predictions),'predictions':predictions}
@@ -338,6 +382,61 @@ _video_jobs={}
 
 def video_dir(ident):
     return STORE/'videos'/ident
+
+def remove_video_files(ident):
+    path=video_dir(ident)
+    if path.resolve().parent!=(STORE/'videos').resolve():
+        raise RuntimeError('Video path outside storage')
+    if path.exists():shutil.rmtree(path)
+
+def storage_summary():
+    with db() as con:
+        count,image_bytes=con.execute('SELECT COUNT(*),COALESCE(SUM(LENGTH(original)+COALESCE(LENGTH(result),0)),0) FROM analyses').fetchone()
+        image_bytes+=con.execute('SELECT COALESCE(SUM(LENGTH(image)),0) FROM detections').fetchone()[0]
+        reusable=con.execute('PRAGMA freelist_count').fetchone()[0]*con.execute('PRAGMA page_size').fetchone()[0]
+    return dict(analyses=count,analysis_limit=500,image_bytes=image_bytes,image_limit=512*1024*1024,disk_free=shutil.disk_usage(STORE).free,database_bytes=(STORE/'haixun.sqlite').stat().st_size,reusable_bytes=reusable)
+
+class CleanupSelection(BaseModel):
+    task_id: str
+    include_linked: bool = False
+    confirmation: str = ''
+
+def cleanup_plan(con,item):
+    require(con,'tasks',item.task_id)
+    images=[dict(row) for row in con.execute('SELECT id,name,LENGTH(original)+COALESCE(LENGTH(result),0)+COALESCE((SELECT LENGTH(image) FROM detections d WHERE d.analysis_id=a.id),0) AS bytes,(SELECT COUNT(*) FROM clues c WHERE c.analysis_id=a.id) AS linked FROM analyses a WHERE task_id=? ORDER BY id',(item.task_id,))]
+    images=[row for row in images if item.include_linked or not row['linked']]
+    videos=[dict(row) for row in con.execute("SELECT id,name,status FROM videos v WHERE task_id=? AND status IN ('failed','cancelled') AND NOT EXISTS(SELECT 1 FROM video_clues c WHERE c.video_id=v.id) ORDER BY id",(item.task_id,)) if row['id'] not in _video_jobs or _video_jobs[row['id']].done()]
+    signature=hashlib.sha256(json.dumps(dict(task=item.task_id,linked=item.include_linked,images=images,videos=videos),sort_keys=True).encode()).hexdigest()
+    return dict(images=images,videos=videos,linked_clues=sum(row['linked'] for row in images),reclaimable_image_bytes=sum(row['bytes'] for row in images),confirmation=signature)
+
+@app.get('/admin/storage')
+def admin_storage(request: Request):
+    require_management(request)
+    return storage_summary()
+
+@app.post('/admin/cleanup/preview')
+def preview_cleanup(request: Request,item: CleanupSelection):
+    require_management(request)
+    with db() as con:return cleanup_plan(con,item)
+
+@app.post('/admin/cleanup')
+def execute_cleanup(request: Request,item: CleanupSelection):
+    require_management(request)
+    with _video_submit_lock,_image_lock:
+        with db() as con:
+            con.execute('BEGIN IMMEDIATE')
+            plan=cleanup_plan(con,item)
+            if not hmac.compare_digest(item.confirmation,plan['confirmation']):raise HTTPException(409,'清理范围已变化，请重新预览后确认')
+            for row in plan['images']:
+                con.execute("UPDATE clues SET analysis_id=NULL,notes=notes||? WHERE analysis_id=?",('\n关联影像已由管理者清理，原影像编号：'+row['id'],row['id']))
+                for table in ('detections','reviews'):con.execute(f'DELETE FROM {table} WHERE analysis_id=?',(row['id'],))
+                con.execute('DELETE FROM analyses WHERE id=?',(row['id'],))
+            for row in plan['videos']:
+                # Reclaim files before deleting the only directory reference.
+                remove_video_files(row['id'])
+                con.execute('DELETE FROM videos WHERE id=?',(row['id'],))
+            event(con,item.task_id,f"管理清理 · {len(plan['images'])} 张影像、{len(plan['videos'])} 条失效视频；保留任务与线索")
+    return dict(images_deleted=len(plan['images']),videos_deleted=len(plan['videos']),storage=storage_summary())
 
 def demo_video_samples():
     directory=STORE/'demo-videos'
@@ -412,15 +511,24 @@ def video_worker(ident):
             if require(con,'videos',ident)['status']=='cancelled':return
             con.execute("UPDATE videos SET status='completed',progress=1 WHERE id=?",(ident,))
             event(con,row['task_id'],f"视频检测完成 · {row['name']} · {len(records)} 个抽样帧")
-    except Exception as exc:
+    except Exception:
+        logger.exception('Video processing failed for %s',ident)
         with db() as con:
-            con.execute("UPDATE videos SET status='failed',error=? WHERE id=? AND status!='cancelled'",(str(exc)[:500],ident))
+            con.execute("UPDATE videos SET status='failed',error=? WHERE id=? AND status!='cancelled'",('视频处理失败，请检查片长、格式后重新提交',ident))
     finally:
         if capture is not None:capture.release()
         if writer is not None:writer.release()
+        with db() as con:
+            row=con.execute('SELECT status FROM videos WHERE id=?',(ident,)).fetchone()
+        if row and row['status'] in ('failed','cancelled'):
+            remove_video_files(ident)
+        elif row and row['status']=='completed':
+            (directory/'sampled.mp4').unlink(missing_ok=True)
 
 @app.post('/videos')
-async def submit_video(request: Request,task_id: str,name: str=Query(max_length=200),confidence: float=Query(.25,ge=.05,le=.95),sample_fps: float=Query(1,ge=.5,le=2)):
+async def submit_video(request: Request,task_id: str,name: str=Query(min_length=1,max_length=200),confidence: float=Query(.25,ge=.05,le=.95),sample_fps: float=Query(1,ge=.5,le=2)):
+    if not name.strip():raise HTTPException(422,'视频名称不能为空')
+    ensure_storage(64*1024*1024)
     with db() as con:require(con,'tasks',task_id)
     content=bytearray()
     async for chunk in request.stream():
@@ -455,7 +563,14 @@ def get_video(ident: str):
             pending=[r[0] for r in con.execute("SELECT id FROM videos WHERE status IN ('queued','running') ORDER BY rowid")]
             row['ahead']=pending.index(ident) if ident in pending else 0
     if row['status']=='completed':
-        row['results']=json.loads((video_dir(ident)/'records.json').read_text(encoding='utf-8'))
+        try:
+            row['results']=json.loads((video_dir(ident)/'records.json').read_text(encoding='utf-8'))
+            if not isinstance(row['results'],dict) or not isinstance(row['results'].get('frames'),list) or not row['results']['frames']:
+                raise ValueError('Invalid video records')
+        except (OSError,ValueError):
+            with db() as con:
+                con.execute("UPDATE videos SET status='failed',error=? WHERE id=?",('检测结果文件缺失或损坏，请重新提交视频',ident))
+            row.update(status='failed',error='检测结果文件缺失或损坏，请重新提交视频')
     return row
 
 @app.post('/videos/{ident}/cancel')
@@ -473,14 +588,18 @@ def video_media(ident: str,kind: str,download: bool=False):
     if row['status']!='completed':raise HTTPException(409,'结果尚未完成')
     names={'result':'result.mp4','original':'input.mp4','records':'records.json'}
     if kind not in names:raise HTTPException(404,'文件不存在')
-    return FileResponse(video_dir(ident)/names[kind],media_type='application/json' if kind=='records' else 'video/mp4',filename=names[kind] if download else None)
+    path=video_dir(ident)/names[kind]
+    if not path.is_file():raise HTTPException(410,'视频文件已不存在，请重新提交')
+    return FileResponse(path,media_type='application/json' if kind=='records' else 'video/mp4',filename=names[kind] if download else None)
 
 @app.get('/videos/{ident}/frames/{index}')
 def video_frame(ident: str,index: int):
     row=get_video(ident)
     frames=row.get('results',{}).get('frames',[])
     if index<0 or index>=len(frames):raise HTTPException(404,'关键帧不存在')
-    return FileResponse(video_dir(ident)/frames[index]['keyframe'],media_type='image/jpeg')
+    path=video_dir(ident)/frames[index]['keyframe']
+    if not path.is_file():raise HTTPException(410,'关键帧文件已不存在，请重新提交')
+    return FileResponse(path,media_type='image/jpeg')
 
 class VideoClue(BaseModel):
     frame_index: int = Field(ge=0)
@@ -530,8 +649,21 @@ def update_clue(ident: str,item: Update):
     if item.status=="处理中" and not item.assignee.strip():
         raise HTTPException(422,"处理中线索需要负责人")
     with db() as con:
+        con.execute('BEGIN IMMEDIATE')
         row=require(con,"clues",ident)
+        payload=json.dumps(dict(status=item.status,assignee=item.assignee.strip(),feedback=item.feedback),sort_keys=True,ensure_ascii=False)
+        if item.request_id:
+            previous=con.execute('SELECT payload FROM feedback_requests WHERE clue_id=? AND request_id=?',(ident,item.request_id)).fetchone()
+            if previous:
+                if previous['payload']!=payload:raise HTTPException(409,'重复提交标识与内容不一致，请刷新后重试')
+                return {'status':'ok','duplicate':True}
+        suffix=f' · {item.feedback}'
+        if row['status']==item.status and row['assignee']==item.assignee.strip() and (not item.feedback or row['notes'].split('\n')[-1].endswith(suffix)):
+            if item.request_id:con.execute('INSERT INTO feedback_requests VALUES(?,?,?)',(ident,item.request_id,payload))
+            return {'status':'ok','duplicate':True}
         notes=row["notes"]+(f"\n{now()} · {item.feedback}" if item.feedback else "")
+        if len(notes)>20000:raise HTTPException(422,'历史备注已达容量上限，请先导出报告并新建线索')
+        if item.request_id:con.execute('INSERT INTO feedback_requests VALUES(?,?,?)',(ident,item.request_id,payload))
         con.execute("UPDATE clues SET status=?,assignee=?,notes=? WHERE id=?",(item.status,item.assignee.strip(),notes,ident))
         event(con,row["task_id"],f"{row['title']} → {item.status} · {item.assignee or '未分派'} · {item.feedback}")
     return {"status":"ok"}

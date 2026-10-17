@@ -28,6 +28,45 @@ def page_items(items,key,size=3):
         st.rerun()
     return items[page*size:(page+1)*size]
 
+def management_panel(tasks):
+    with st.expander('演示管理 · 存储与清理',icon=':material/storage:'):
+        st.caption('只在需要时读取存储信息。清理先预览再确认，不删除任务或文字线索。')
+        code=st.text_input('清理管理口令',type='password',key='cleanup_code') if CLOUD else ''
+        headers={'X-Seaseek-Reset':code}
+        if st.button('查看存储用量'):
+            st.session_state.storage_info=api('GET','/admin/storage',headers=headers)
+        info=st.session_state.get('storage_info')
+        if info:
+            a,b,c=st.columns(3)
+            a.metric('影像记录',f"{info['analyses']} / {info['analysis_limit']}")
+            b.metric('影像内容',f"{info['image_bytes']/1024**2:.1f} MB")
+            c.metric('磁盘剩余',f"{info['disk_free']/1024**3:.1f} GB")
+            st.caption(f"数据库占用 {info['database_bytes']/1024**2:.1f} MB，其中 {info['reusable_bytes']/1024**2:.1f} MB 可供后续写入复用；删除记录不会立即缩小数据库文件。")
+        ident=st.selectbox('清理哪个任务',[t['id'] for t in tasks],format_func=lambda ident:next(t['name']+' · '+ident[:6] for t in tasks if t['id']==ident),key='cleanup_task')
+        linked=st.checkbox('包括已关联线索的影像（保留文字线索，移除影像关联）')
+        selection=dict(task_id=ident,include_linked=linked)
+        if st.button('预览清理范围'):
+            st.session_state.cleanup_preview=(selection,api('POST','/admin/cleanup/preview',json=selection,headers=headers))
+        stored=st.session_state.get('cleanup_preview')
+        if stored and stored[0]==selection:
+            plan=stored[1]
+            st.write(f"将清理 {len(plan['images'])} 张影像、{len(plan['videos'])} 条失效视频；{plan['linked_clues']} 条线索将失去影像关联。")
+            if plan['images']:st.dataframe(pd.DataFrame(plan['images'])[['name','bytes','linked']],hide_index=True)
+            st.caption('处理中的视频、成功的视频、实拍示例素材及其他任务均保留。请先导出需要的报告与影像。')
+            confirmed=st.checkbox('确认按本次预览清理资源',key='cleanup_confirm_'+plan['confirmation'])
+            if st.button('执行本次清理',disabled=not confirmed or not (plan['images'] or plan['videos'])):
+                outcome=api('POST','/admin/cleanup',json=dict(**selection,confirmation=plan['confirmation']),headers=headers)
+                st.session_state.storage_info=outcome['storage']
+                st.session_state.pop('cleanup_preview',None)
+                st.session_state.pop('image_media',None)
+                st.success('已清理选定资源。任务与文字线索已保留。')
+
+def next_steps(task):
+    st.caption('下一步：核实影像 → 定位线索 → 记录处置')
+    a,b=st.columns(2)
+    a.link_button('查看线索态势',share_link('situation',task['id']),width='stretch')
+    b.link_button('进入协同处置',share_link('collaboration',task['id']),width='stretch')
+
 def overview():
     st.html('<section class="hero"><div class="eyebrow">SeaSeek · MARITIME SEARCH & RESCUE</div><h1>海寻<span>.</span></h1><p class="subtitle">融合 PAC-Net 特征增强的海面搜救协同平台</p><p class="tagline">以影像为线索，向希望靠近。</p><span class="tag">影像感知 / 线索态势 / 协同响应</span></section>')
     left,right=st.columns([3,1],vertical_alignment="center")
@@ -73,6 +112,8 @@ def overview():
     if not tasks:
         st.info("还没有搜救任务。创建第一个任务，或载入虚构演示任务体验完整流程。")
         return
+    with st.popover('管理与维护',icon=':material/settings:'):
+        management_panel(tasks)
     main,side=st.columns([1.7,1])
     with main:
         st.subheader("当前任务")
@@ -107,6 +148,7 @@ def clue_form(task,analysis_id=None,key="clue",target=None):
             else:
                 api("POST","/clues",json=dict(task_id=task["id"],analysis_id=analysis_id,title=heading,notes=notes,lat=lat if positioned else None,lon=lon if positioned else None))
                 st.success("线索已保存，可在协同处置中核实和分派。")
+                next_steps(task)
 
 def imaging():
     title("OBSERVE / ANALYZE","影像分析","把现场影像转化为可核实的搜救线索。")
@@ -277,7 +319,8 @@ def video_panel(task):
         elif source=='合成演示' and demo.exists():
             content=demo.read_bytes()
             name='训练图片合成演示片.mp4'
-        rate=st.select_slider("每秒检测帧数",[.5,1.,2.],value=1.)
+        rate=st.select_slider("每秒检测帧数",[.5,1.,2.],value=.5)
+        st.caption('演示默认每两秒检测一帧；提高频率会延长处理时间，低频抽样可能漏过短暂目标。')
         conf=st.slider("视频模型置信度阈值",.05,.95,.25,.05,key='video_conf')
         if st.button("提交后台检测",type='primary',icon=':material/play_arrow:'):
             if content:
@@ -409,8 +452,9 @@ def collaboration():
                     st.info('请选择要反馈的线索。')
                     return
                 clue=next(c for c in clues if c["id"]==clue_id)
-                st.code(share_link('collaboration',task['id'],clue_id),language=None)
-                st.caption('手机打开上方链接即可反馈这条线索。')
+                with st.popover('手机提交反馈',icon=':material/devices:'):
+                    st.code(share_link('collaboration',task['id'],clue_id),language=None)
+                    st.caption('手机打开此链接即可反馈这条线索。')
                 if clue["analysis_id"]:
                     st.image(media(clue['analysis_id'],'result'),caption="关联增强影像预览",width='stretch')
                 elif clue.get('video_id'):

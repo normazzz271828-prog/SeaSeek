@@ -24,6 +24,7 @@ home=landing.home
 st.set_page_config(page_title="海寻 SeaSeek · 海面搜救协同平台",page_icon=":material/radar:",layout="wide")
 # Deep links contain stable business IDs, separate from formatted widget labels.
 entry=(st.query_params.get('task_id'),st.query_params.get('clue_id'))
+if not entry[0]:st.session_state.pop('entry_link',None)
 if entry[0] and entry!=st.session_state.get('entry_link'):
     st.session_state.entry_link=entry
     st.session_state.active_task=entry[0]

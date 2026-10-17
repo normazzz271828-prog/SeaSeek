@@ -84,7 +84,7 @@ class DemoV2(unittest.TestCase):
             self.assertEqual(self.client.post('/analyses',json={}).status_code,429)
         backend._image_lock.acquire()
         try:
-            response=self.client.post('/analyses',json=dict(task_id=self.task,name='bad',image='bad',method='original'))
+            response=self.client.post('/analyses',json=dict(task_id=self.task,name='bad',image=base64.b64encode(b'not-an-image').decode(),method='original'))
             self.assertEqual(response.status_code,429)
         finally:backend._image_lock.release()
 
