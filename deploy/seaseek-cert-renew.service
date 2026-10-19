@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew SeaSeek HTTPS certificate
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/seaseek-web/certbot/bin/python /opt/seaseek-web/certbot-ipv4.py renew --quiet --deploy-hook "/usr/sbin/nginx -t && /usr/bin/systemctl reload nginx"

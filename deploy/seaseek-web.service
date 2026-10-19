@@ -1,0 +1,24 @@
+[Unit]
+Description=SeaSeek domain website
+After=network-online.target seaseek-backend-link.service
+Wants=network-online.target seaseek-backend-link.service
+
+[Service]
+Type=simple
+User=seaseek-web
+Group=seaseek-web
+WorkingDirectory=/opt/seaseek-web/app
+EnvironmentFile=/etc/seaseek-web/web.env
+ExecStart=/opt/seaseek-web/.venv/bin/python -m streamlit run cloud/streamlit_app.py --server.address 127.0.0.1 --server.port 8505 --server.headless true
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/seaseek-web
+Environment=HOME=/var/lib/seaseek-web
+
+[Install]
+WantedBy=multi-user.target
