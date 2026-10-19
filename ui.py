@@ -21,7 +21,16 @@ def finish_and_stop():
     st.html('<script>window.haiXunGlass?.enter(document.documentElement.dataset.hxRoute);</script>',unsafe_allow_javascript=True)
     st.stop()
 
-def api(method,path,*,binary=False,**kwargs):
+INTERNAL_TASK_IDS=frozenset({'c2c2457908024d498291cda4823f6b50','cb89847e4849466bb4dda1e230123af8','80a89ff30d334994816b9cef359247de','7d44d789615d49689ce44f7fcf83ae84','9683a535971e4a199bfdc630937a6dd0','dbbb97f5eae145fc984ca9cb9c2be1af','b1ba1dbc9d4a43b7bea8033b62e4e42b','e6485f1813664f6fbb98c03143c75cc1'})
+
+def public_tasks(tasks):
+    visible=[dict(task) for task in tasks if task['id'] not in INTERNAL_TASK_IDS]
+    for task in visible:
+        if task['id']=='demo-coastal':
+            task.update(name='近海联合搜救 · 示例任务',area='青岛近海',owner='示例任务',description='查看影像、核实线索并记录处置进展。')
+    return visible
+
+def api(method,path,*,binary=False,include_internal=False,**kwargs):
     api_url,api_token=connection_settings()
     if not api_url:
         st.info("云端工作台正在准备中。你可以先浏览首页与平台介绍。")
@@ -37,7 +46,14 @@ def api(method,path,*,binary=False,**kwargs):
         if response.is_redirect:
             raise requests.HTTPError('API redirect',response=response)
         response.raise_for_status()
-        return response.content if binary else response.json()
+        if binary:return response.content
+        data=response.json()
+        if not include_internal and method=='GET':
+            if path=='/tasks':return public_tasks(data)
+            if path=='/overview':
+                data['tasks']=public_tasks(data['tasks'])
+                for field in ('clues','events'):data[field]=[row for row in data[field] if row['task_id'] not in INTERNAL_TASK_IDS]
+        return data
     except requests.RequestException as exc:
         detail="云端工作台暂时无法连接，请稍后再试。" if CLOUD else "后端未连接，请通过 start_local.ps1 同时启动网站和 API。"
         if getattr(exc,"response",None) is not None:
@@ -55,7 +71,7 @@ def title(kicker,heading,description):
 def task_picker():
     tasks=api("GET","/tasks")
     if not tasks:
-        st.info("先到任务总览创建任务，或载入演示任务。")
+        st.info("请先到任务总览创建搜救任务。")
         finish_and_stop()
     ids=[t["id"] for t in tasks]
     current=st.session_state.get("active_task")

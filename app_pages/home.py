@@ -13,7 +13,7 @@ def home():
     content=re.sub(r'<a href="http://127.0.0.1:8505/about"[^>]*>.*?</a>','',content)
     content=content.replace('http://127.0.0.1:8505"','/overview"').replace('http://127.0.0.1:8505/','/')
     content=content.replace(' target="_blank" rel="noopener"','').replace('hero','landing-hero')
-    content=content.replace('首页视觉预览 · 背景为 AI 创作场景 · 算法接入状态以工作台为准','比赛演示环境 · 演练位置为模拟 · 背景为 AI 创作场景 · 算法接入状态以工作台为准')
+    content=content.replace('首页视觉预览 · 背景为 AI 创作场景 · 算法接入状态以工作台为准','以影像发现线索，以协作连接行动。')
     icp=setting('SEASEEK_ICP_NUMBER')
     if icp:
         content=content.replace('</footer>','<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">'+html.escape(icp)+'</a></footer>')

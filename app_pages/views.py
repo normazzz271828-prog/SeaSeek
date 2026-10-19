@@ -29,7 +29,7 @@ def page_items(items,key,size=3):
     return items[page*size:(page+1)*size]
 
 def management_panel(tasks):
-    with st.expander('演示管理 · 存储与清理',icon=':material/storage:'):
+    with st.expander('资源管理 · 存储与清理',icon=':material/storage:'):
         st.caption('只在需要时读取存储信息。清理先预览再确认，不删除任务或文字线索。')
         code=st.text_input('清理管理口令',type='password',key='cleanup_code') if CLOUD else ''
         headers={'X-Seaseek-Reset':code}
@@ -74,20 +74,9 @@ def overview():
         st.subheader("任务总览")
         st.caption("搜索、分析、行动。所有进展都留在任务里。")
     with right:
-        if st.button("载入演示任务",icon=":material/play_arrow:",width="stretch"):
+        if st.button("打开示例任务",icon=":material/play_arrow:",width="stretch"):
             st.session_state.active_task=api("POST","/demo")["id"]
             st.session_state.task_selection=st.session_state.active_task
-            st.rerun()
-    with st.expander('重置演示任务',icon=':material/restart_alt:'):
-        st.caption('只恢复“近海联合搜救 · 演示任务”，删除其影像、线索、视频和记录；其他任务保留。')
-        reset_code=st.text_input('演示管理口令',type='password') if CLOUD else ''
-        confirmed=st.checkbox('我确认清理演示任务并恢复三条初始线索')
-        if st.button('确认重置演示',disabled=not confirmed):
-            api('POST','/demo/reset',headers={'X-Seaseek-Reset':reset_code})
-            for key in ('analysis_id','video_id','image_media','task_selection','clue_selection','entry_link'):
-                st.session_state.pop(key,None)
-            st.session_state.active_task='demo-coastal'
-            st.success('演示任务已恢复。')
             st.rerun()
     snapshot=api('GET','/overview')
     tasks=snapshot['tasks']
@@ -110,17 +99,29 @@ def overview():
                     st.session_state.task_selection=st.session_state.active_task
                     st.rerun()
     if not tasks:
-        st.info("还没有搜救任务。创建第一个任务，或载入虚构演示任务体验完整流程。")
+        st.info("暂无搜救任务。创建任务，开始采集影像与整理线索。")
         return
     with st.popover('管理与维护',icon=':material/settings:'):
-        management_panel(tasks)
+        management_panel(api('GET','/tasks',include_internal=True))
+        with st.expander('重置演示任务',icon=':material/restart_alt:'):
+            st.caption('只恢复“近海联合搜救 · 演示任务”，删除其影像、线索、视频和记录；其他任务保留。')
+            reset_code=st.text_input('演示管理口令',type='password') if CLOUD else ''
+            confirmed=st.checkbox('我确认清理演示任务并恢复三条初始线索')
+            if st.button('确认重置演示',disabled=not confirmed):
+                api('POST','/demo/reset',headers={'X-Seaseek-Reset':reset_code})
+                for key in ('analysis_id','video_id','image_media','task_selection','clue_selection','entry_link'):
+                    st.session_state.pop(key,None)
+                st.session_state.active_task='demo-coastal'
+                st.success('演示任务已恢复。')
+                st.rerun()
     main,side=st.columns([1.7,1])
     with main:
         st.subheader("当前任务")
         for task in page_items(tasks,'overview_tasks'):
             with st.container(border=True,key=f"glass_task_{task['id']}"):
                 st.markdown(f"### {task['name']}")
-                st.caption(f"{task['area']} · 负责人：{task['owner']} · {task['created']}")
+                summary=task['area']+(f" · 负责人：{task['owner']}" if task['id']!='demo-coastal' else '')
+                st.caption(summary)
                 st.write(task["description"])
                 if st.button("进入影像分析",key=f"task_{task['id']}",icon=":material/arrow_forward:"):
                     st.session_state.active_task=task["id"]
@@ -129,6 +130,7 @@ def overview():
     with side:
         st.subheader("最近动态")
         events=snapshot['events']
+        if not events:st.caption('暂无最新动态。任务进展将在这里更新。')
         for item in page_items(sorted(events,key=lambda e:(e["created"],e["id"]),reverse=True),'overview_events'):
             with st.container(border=True,key=f"glass_event_{item['id']}"):
                 st.caption(item["created"])
@@ -153,7 +155,7 @@ def clue_form(task,analysis_id=None,key="clue",target=None):
 def imaging():
     title("OBSERVE / ANALYZE","影像分析","把现场影像转化为可核实的搜救线索。")
     task=task_picker()
-    image_tab,video_tab=st.tabs(["图片分析","视频演示"],key="analysis_tab",on_change="rerun")
+    image_tab,video_tab=st.tabs(["图片分析","视频分析"],key="analysis_tab",on_change="rerun")
     if image_tab.open:
         with image_tab:
             with st.container(border=True,key="glass_analysis_controls"):
@@ -171,7 +173,7 @@ def imaging():
                         uploaded=st.file_uploader("上传现场影像",type=["jpg","jpeg","png"],max_upload_size=12)
                     elif source=='示例图片' and examples:
                         sample=st.selectbox("海面示例",examples,format_func=lambda p:p.stem)
-                        st.caption("来源：授权复用项目的训练图片；用于界面演示。")
+                        st.caption("选择样例影像，或上传现场图片。")
                     else:
                         st.info("暂无示例，请上传图片。")
                 with settings_col:
@@ -179,7 +181,7 @@ def imaging():
                     method=st.selectbox("增强方法",list(METHODS))
                     detect_ships=st.checkbox("同时标注船舶",value=True)
                     confidence=st.slider("模型置信度阈值",.05,.95,.25,.05)
-                    st.caption("九类船舶旋转框检测已接入，默认检测原图。增强方法仍为传统增强，PAC-Net 待适配。")
+                    st.caption("对原图进行船舶检测，可按画面情况调整阈值。")
                     if st.button("开始分析",type="primary",icon=":material/auto_fix_high:",width="stretch"):
                         raw=uploaded.getvalue() if uploaded else (sample.read_bytes() if source=="示例图片" and examples else None)
                         if raw is None:
@@ -190,7 +192,7 @@ def imaging():
                                 result=api("POST","/analyses/upload",params=dict(task_id=task["id"],name=uploaded.name if uploaded else sample.name,method=METHODS[method]),data=raw,headers={"Content-Type":"application/octet-stream"})
                                 st.session_state.analysis_id=result["id"]
                                 if detect_ships:
-                                    st.write("执行船舶检测并绘制旋转框")
+                                    st.write("识别船舶目标")
                                     api("POST",f"/analyses/{result['id']}/detect",json=dict(confidence=confidence,source="original"))
                                 status.update(label="分析完成，结果已保存",state="complete",expanded=False)
             history=api("GET","/analyses",params={"task_id":task["id"]})
@@ -208,7 +210,7 @@ def imaging():
             else:
                 result=api("GET",f"/analyses/{selected}")
                 detection=result.get('detection')
-                st.caption(f"{result['name']} · {result['width']} × {result['height']} · 实际方法：{result['selected']}")
+                st.caption(f"{result['name']} · {result['width']} × {result['height']} · 增强方式：{result['selected']}")
                 canvas,details=st.columns([1.8,1],gap="large")
                 with canvas:
                     options=["船舶标注","并排对比","原图","增强结果"] if detection else ["并排对比","原图","增强结果"]
@@ -218,7 +220,7 @@ def imaging():
                         a.image(media(selected,'original'),caption="原图预览",width="stretch")
                         b.image(media(selected,'original' if result['result_is_original'] else 'result'),caption="增强结果预览",width="stretch")
                     elif view=="船舶标注":
-                        st.image(media(selected,'detection',detection['created']),caption="旋转框 + 类别 + 模型置信度（待人工核实）",width="stretch")
+                        st.image(media(selected,'detection',detection['created']),caption="船舶识别结果",width="stretch")
                     else:
                         st.image(media(selected,'original' if view=='原图' or result['result_is_original'] else 'result'),width="stretch")
                     with st.expander("图片下载",icon=":material/download:"):
@@ -236,7 +238,7 @@ def imaging():
                 with details:
                     if detection:
                         st.subheader(f"检测目标 · {len(detection['predictions'])}")
-                        st.caption(f"检测输入：{'原图' if detection['source']=='original' else '增强图'} · 阈值 {detection['confidence']:.0%}。结果为模型预测，不是数据集真值或识别准确率。")
+                        st.caption(f"检测输入：{'原图' if detection['source']=='original' else '增强图'} · 阈值 {detection['confidence']:.0%}。")
                         if detection['predictions']:
                             st.dataframe(pd.DataFrame([dict(目标=f"{i+1:02d}",类别=p['category'],模型置信度=f"{p['score']:.1%}") for i,p in enumerate(detection['predictions'])]),hide_index=True)
                         else:
@@ -276,7 +278,7 @@ def video_panel(task):
     if workspace=='查看结果':
         items=api('GET','/videos',params={'task_id':task['id']})
         if not items:
-            st.info('该任务还没有视频记录。切换到“提交素材”上传短片或使用演示片。')
+            st.info('暂无视频记录，请先提交视频进行分析。')
             return
         ids=[v['id'] for v in items]
         current=st.session_state.get('video_id')
@@ -290,7 +292,7 @@ def video_panel(task):
         return
     a,b=st.columns([1,2],gap='large')
     with a:
-        source=st.segmented_control('视频来源',['实拍示例','上传视频','合成演示'],default='实拍示例',key='video_source')
+        source=st.segmented_control('视频来源',['实拍示例','上传视频','合成样片'],default='实拍示例',key='video_source')
         content=None
         name=''
         sample=None
@@ -310,19 +312,19 @@ def video_panel(task):
                     cached=(identity,api('GET',f'/video-samples/{ident}/media',binary=True))
                     st.session_state.video_sample_preview=cached
                 content=cached[1]
-            else:st.info('实拍素材尚未安装，可先上传视频或选择合成演示。')
+            else:st.info('暂无实拍样片，请上传视频。')
         elif source=='上传视频':
             uploaded=st.file_uploader("上传 MP4",type=['mp4'],max_upload_size=12,key='video_upload')
             if uploaded:
                 content=uploaded.getvalue()
                 name=uploaded.name
-        elif source=='合成演示' and demo.exists():
+        elif source=='合成样片' and demo.exists():
             content=demo.read_bytes()
-            name='训练图片合成演示片.mp4'
+            name='训练图片合成样片片.mp4'
         rate=st.select_slider("每秒检测帧数",[.5,1.,2.],value=.5)
-        st.caption('演示默认每两秒检测一帧；提高频率会延长处理时间，低频抽样可能漏过短暂目标。')
+        st.caption('默认每两秒检测一帧，可按目标运动速度调整。')
         conf=st.slider("视频模型置信度阈值",.05,.95,.25,.05,key='video_conf')
-        if st.button("提交后台检测",type='primary',icon=':material/play_arrow:'):
+        if st.button("开始视频分析",type='primary',icon=':material/play_arrow:'):
             if content:
                 item=api('POST','/videos',params=dict(task_id=task['id'],name=name,confidence=conf,sample_fps=rate),data=content,headers={'Content-Type':'video/mp4'})
                 st.session_state.video_id=item['id']
@@ -334,14 +336,14 @@ def video_panel(task):
             st.subheader('素材预览')
             if content:st.video(content)
             else:st.info('选择一段短片后在此预览。')
-            st.caption('此处仅播放输入素材；点击“提交后台检测”后才运行模型。')
+            st.caption('预览素材，确认后提交分析。')
             if sample:
                 with st.expander('素材来源与适用范围'):
                     st.write(sample['source'])
                     st.caption(sample['provenance'])
-            elif source=='合成演示':
+            elif source=='合成样片':
                 st.caption('训练集静态图片合成，非真实航拍视频。')
-        st.warning('当前模型训练类别为九类船舶，对小艇、帆船和摩托艇可能漏检或误分类。检测类别及置信度仅为预测，需人工核实。')
+        st.caption('识别结果供线索核实参考，小型船舶与复杂场景可能存在偏差。')
 
 @st.fragment(run_every='3s')
 def video_result(ident,task):
@@ -367,7 +369,7 @@ def video_completed(ident,task,result):
     data=result['results']
     st.success(f"检测完成 · {len(data['frames'])} 个抽样帧 · {data['sample_fps']:g} 帧/秒")
     st.caption('视频播放的是抽样帧标注结果。抽帧可能遗漏短暂出现的目标；各帧目标数不代表唯一船舶数。')
-    st.caption('实拍素材存在模型类别差异，框出目标不代表船型判断正确。')
+    st.caption('船型判断请结合影像核实。')
     records=data['frames']
     playback,frames=st.tabs(['标注视频','关键帧核实'],key=f'video_result_view_{ident}',on_change='rerun')
     if playback.open:
@@ -401,7 +403,7 @@ def situation():
     with a:
         with st.container(border=True,key="glass_map"):
             st.subheader("搜救海域")
-            st.caption("位置来自人工录入；演示任务的位置为虚构。底图需要网络连接。")
+            st.caption("根据已录入坐标查看线索分布。")
             if mapped:
                 latitude=sum(c["lat"] for c in mapped)/len(mapped)
                 longitude=sum(c["lon"] for c in mapped)/len(mapped)
@@ -488,22 +490,16 @@ def collaboration():
                 st.write(item["message"])
 
 def about():
-    title("ABOUT / SeaSeek","发现线索，协同行动。","海面搜救演示平台 · 第二版")
-    st.markdown("海寻围绕 **任务 → 影像分析 → 人工核实 → 协同处置 → 报告归档** 建立搜救业务闭环。")
+    title("ABOUT / SeaSeek","发现线索，协同行动。","海寻 · 海面搜救协同平台")
+    st.markdown("海寻连接现场影像、目标发现、线索核实与协同处置，为海面搜救提供清晰、连续的信息工作流。")
     a,b=st.columns(2)
-    with a:
-        with st.container(border=True,key="glass_about_current"):
-            st.subheader("已实现")
-            st.markdown("- Streamlit 界面与独立 FastAPI 通信\n- SQLite 持久保存任务、影像、线索与操作记录\n- 真实传统增强、去雾和图片下载\n- 人工线索定位、分派、反馈与报告导出\n- 海洋视觉、轻量动画与减少动态效果支持")
-            st.markdown("- 九类船舶旋转框检测、中文标注与坐标导出\n- 短视频后台抽帧检测、关键帧与视频线索")
-    with b:
-        with st.container(border=True,key="glass_about_next"):
-            st.subheader("待接入")
-            st.markdown("- PAC-Net 海面适配与对照验证\n- 落水人员等搜救目标与视频跟踪\n- 个人账号与权限（按需扩展）\n- 独立域名网页端与微信小程序")
-    st.info("当前为演示界面，尚未接入个人账号和角色权限。负责人姓名是业务记录字段。" if CLOUD else "当前仅监听本机地址，属于本地演示模式。姓名是业务记录字段，不是登录认证。")
-    st.subheader("四端约定")
-    st.markdown("本地端 → Streamlit 云端验证 → 独立域名网页端 / 微信小程序端。四端使用统一业务规则与后端数据源，界面按场景适配。")
-    st.subheader("算法来源")
-    st.caption("传统增强与去雾复用自 D:/Projects/海面目标检测与识别/accuracy_lab/followup；仅适配模块导入。它们不等同于 PAC-Net。样例从该项目训练划分选取。")
-    summary=json.loads((ROOT/'assets/dataset_summary.json').read_text(encoding='utf-8'))
-    st.caption(f"源项目训练划分：{summary['training_images']:,} 张图片、{summary['training_objects']:,} 个标注目标。本版复用冻结模型和 {summary['example_images']} 张训练示例，不重新训练；训练样例表现不代表泛化准确率。模型权重与来源校验记录见 models/provenance.json。")
+    with a,st.container(border=True,key="glass_about_current"):
+        st.subheader("影像感知")
+        st.markdown("- 图片增强与原图对比\n- 船舶目标识别与标注\n- 短视频分析与关键帧查看\n- 关联影像与搜救线索")
+    with b,st.container(border=True,key="glass_about_next"):
+        st.subheader("协同响应")
+        st.markdown("- 任务与线索集中管理\n- 线索位置与海域态势\n- 负责人、处置状态与反馈\n- 任务报告与记录导出")
+    with st.expander("技术与数据说明"):
+        st.write("当前提供传统图像增强与九类船舶检测，PAC-Net 海面适配仍在推进。模型输出属于预测结果，需结合原始影像人工核实；置信度不等于识别准确率。")
+        st.write("线索位置由人工录入，示例任务使用预设数据。视频采用抽帧分析，不提供目标跟踪或唯一船舶计数。")
+        st.caption("样例图片来自授权复用项目的训练划分；实拍样片保留来源说明，未用于模型训练或准确率评估。首页背景为创作场景。")

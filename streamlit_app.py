@@ -54,8 +54,6 @@ if page.url_path=="":
     with about_col,st.container(key="about_entry"):
         st.page_link(pages[-1],label="关于海寻",icon=":material/radar:",width="content")
 st.html('<script>window.haiXunGlass?.prepare('+json.dumps(page.url_path)+');</script>',unsafe_allow_javascript=True)
-if page.url_path:
-    st.caption('演示环境 · 演练位置为模拟；上传影像仅用于本次演示分析。')
 try:
     page.run()
 finally:

@@ -10,6 +10,15 @@ os.environ['HAIXUN_DATA_DIR']=TEMP.name
 
 
 class CloudContracts(unittest.TestCase):
+    def test_internal_tasks_hidden_without_changing_source_records(self):
+        import ui
+        internal=next(iter(ui.INTERNAL_TASK_IDS))
+        records=[dict(id=internal,name='独立域名上线验收'),dict(id='demo-coastal',name='演示任务',area='虚构',owner='演示负责人',description='演示'),dict(id='user-task',name='用户任务')]
+        visible=ui.public_tasks(records)
+        self.assertEqual([r['id'] for r in visible],['demo-coastal','user-task'])
+        self.assertIn('示例任务',visible[0]['name'])
+        self.assertEqual(records[1]['name'],'演示任务')
+        self.assertEqual(visible[1]['name'],'用户任务')
     def test_root_entry_hosted_binding_has_no_local_api_fallback(self):
         import runtime
         for address,cloud in [(None,True),('0.0.0.0',True),('127.0.0.1',False)]:
@@ -47,7 +56,9 @@ class CloudContracts(unittest.TestCase):
     def test_secrets_updates_apply_without_reimporting_modules(self):
         import runtime,ui
         secrets={}
-        with patch.dict(os.environ,{},clear=True),patch.object(runtime,'CLOUD',True),patch.object(runtime.st,'secrets',secrets),patch.object(ui.requests,'request',return_value=Mock(is_redirect=False)) as request:
+        response=Mock(is_redirect=False)
+        response.json.return_value=[]
+        with patch.dict(os.environ,{},clear=True),patch.object(runtime,'CLOUD',True),patch.object(runtime.st,'secrets',secrets),patch.object(ui.requests,'request',return_value=response) as request:
             self.assertEqual(runtime.connection_settings(),('',''))
             secrets.update(HAIXUN_API_URL='https://first.example/',HAIXUN_API_TOKEN='first-token')
             ui.api('GET','/tasks')
